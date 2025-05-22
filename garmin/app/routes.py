@@ -5,7 +5,12 @@ import pandas as pd
 from garmin.db.db_manager import get_db_session
 from garmin.db.models import HealthStats, Steps, Sleep, HeartRate, Stress, BodyBattery
 
-bp = Blueprint('weight', __name__)
+bp = Blueprint(
+    'weight',
+    __name__,
+    template_folder="templates",
+    static_folder="static"
+)
 
 @bp.route('/metrics_dashboard')
 def metrics_dashboard_route():
