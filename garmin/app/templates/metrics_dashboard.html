@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block content %}
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<style>
+  .plot-row { display: flex; flex-direction: row; align-items: flex-start; gap: 2vw; }
+  .plot-desc { min-width: 200px; max-width: 320px; color: #444; font-size: 1.05rem; padding-top: 0.5rem; }
+  .plot-legend { margin-top: 1.2em; margin-bottom: 1.2em; }
+  .plot-content { flex: 1; min-width: 0; }
+  .plot-content .bk-root { width: 100% !important; max-width: 100% !important; min-width: 0 !important; }
+  .accordion-item { margin-bottom: 1.5rem; border-radius: 10px; overflow: hidden; }
+  .accordion-button:not(.collapsed) { background: #e3eafc; color: #1976d2; }
+  .accordion-body { background: #fff; }
+  .refresh-btn { margin-bottom: 1.5rem; }
+</style>
+
+<div class="container" style="width:98vw; margin:1vw auto;">
+  <h1>Garmin Metrics Dashboard</h1>
+  <button id="refresh-data-btn" class="btn btn-primary refresh-btn">Refresh Data</button>
+  {% if force_refresh %}<span class="text-success ms-2">Plots refreshed!</span>{% endif %}
+  <script>
+    document.getElementById('refresh-data-btn').addEventListener('click', function(e) {
+      e.preventDefault();
+      let url = new URL(window.location.href);
+      url.searchParams.set('refresh', '1');
+      window.location.href = url.toString();
+    });
+    window.addEventListener('DOMContentLoaded', function() {
+      let url = new URL(window.location.href);
+      if (url.searchParams.get('refresh') === '1') {
+        url.searchParams.delete('refresh');
+        window.history.replaceState({}, document.title, url.pathname + (url.search ? url.search : ''));
+      }
+    });
+  </script>
+  <div class="accordion" id="plotsAccordion">
+    <div class="accordion-item">
+      <h2 class="accordion-header" id="weightHead">
+        <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#weightPlot" aria-expanded="true" aria-controls="weightPlot">Weight &amp; Body Fat</button>
+      </h2>
+      <div id="weightPlot" class="accordion-collapse collapse show" aria-labelledby="weightHead" data-bs-parent="#plotsAccordion">
+        <div class="accordion-body">
+          <div class="plot-row">
+            <div class="plot-desc">
+              Weight and body fat % over time, with interactive moving average controls. Dual y-axes for weight and body fat.
+            </div>
+            <div class="plot-content" id="plot-weight">
+              {% if weight_script %}{{ weight_script|safe }}{% endif %}
+              {% if weight_div %}<div>{{ weight_div|safe }}</div>{% else %}<div class="message">{{ weight_msg }}</div>{% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="accordion-item">
+      <h2 class="accordion-header" id="stepsHead">
+        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#stepsPlot" aria-expanded="false" aria-controls="stepsPlot">Steps</button>
+      </h2>
+      <div id="stepsPlot" class="accordion-collapse collapse" aria-labelledby="stepsHead" data-bs-parent="#plotsAccordion">
+        <div class="accordion-body">
+          <div class="plot-row">
+            <div class="plot-desc">
+              Daily total steps, step goal, and distance. Visualizes your activity trends.
+            </div>
+            <div class="plot-content" id="plot-steps">
+              {% if steps_script %}{{ steps_script|safe }}{% endif %}
+              {% if steps_div %}<div>{{ steps_div|safe }}</div>{% else %}<div class="message">{{ steps_msg }}</div>{% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="accordion-item">
+      <h2 class="accordion-header" id="sleepHead">
+        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#sleepPlot" aria-expanded="false" aria-controls="sleepPlot">Sleep</button>
+      </h2>
+      <div id="sleepPlot" class="accordion-collapse collapse" aria-labelledby="sleepHead" data-bs-parent="#plotsAccordion">
+        <div class="accordion-body">
+          <div class="plot-row">
+            <div class="plot-desc">
+              Sleep duration and stages (deep, REM, light, awake) and sleep score over time.
+            </div>
+            <div class="plot-content" id="plot-sleep">
+              {% if sleep_script %}{{ sleep_script|safe }}{% endif %}
+              {% if sleep_div %}<div>{{ sleep_div|safe }}</div>{% else %}<div class="message">{{ sleep_msg }}</div>{% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="accordion-item">
+      <h2 class="accordion-header" id="hrHead">
+        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#hrPlot" aria-expanded="false" aria-controls="hrPlot">Heart Rate</button>
+      </h2>
+      <div id="hrPlot" class="accordion-collapse collapse" aria-labelledby="hrHead" data-bs-parent="#plotsAccordion">
+        <div class="accordion-body">
+          <div class="plot-row">
+            <div class="plot-desc">
+              Resting, max, and min average heart rate trends.
+            </div>
+            <div class="plot-content" id="plot-hr">
+              {% if hr_script %}{{ hr_script|safe }}{% endif %}
+              {% if hr_div %}<div>{{ hr_div|safe }}</div>{% else %}<div class="message">{{ hr_msg }}</div>{% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="accordion-item">
+      <h2 class="accordion-header" id="stressHead">
+        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#stressPlot" aria-expanded="false" aria-controls="stressPlot">Stress</button>
+      </h2>
+      <div id="stressPlot" class="accordion-collapse collapse" aria-labelledby="stressHead" data-bs-parent="#plotsAccordion">
+        <div class="accordion-body">
+          <div class="plot-row">
+            <div class="plot-desc">
+              Overall stress level and durations of high, low, and rest stress.
+            </div>
+            <div class="plot-content" id="plot-stress">
+              {% if stress_script %}{{ stress_script|safe }}{% endif %}
+              {% if stress_div %}<div>{{ stress_div|safe }}</div>{% else %}<div class="message">{{ stress_msg }}</div>{% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="accordion-item">
+      <h2 class="accordion-header" id="bbHead">
+        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#bbPlot" aria-expanded="false" aria-controls="bbPlot">Body Battery</button>
+      </h2>
+      <div id="bbPlot" class="accordion-collapse collapse" aria-labelledby="bbHead" data-bs-parent="#plotsAccordion">
+        <div class="accordion-body">
+          <div class="plot-row">
+            <div class="plot-desc">
+              Garmin's estimate of your energy reserves (low/high body battery).
+            </div>
+            <div class="plot-content" id="plot-bb">
+              {% if bb_script %}{{ bb_script|safe }}{% endif %}
+              {% if bb_div %}<div>{{ bb_div|safe }}</div>{% else %}<div class="message">{{ bb_msg }}</div>{% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- All custom legend/checkbox JS removed: now using only Bokeh's built-in legend -->
+{% endblock %}

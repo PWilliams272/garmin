@@ -1,0 +1,10 @@
+notebooks/
+data/
+*.ipynb
+.env
+.venv/
+__pycache__/
+garmin_project.egg-info/
+notebooks/
+*.db
+.DS_Store

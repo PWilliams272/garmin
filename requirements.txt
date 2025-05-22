@@ -1,0 +1,12 @@
+flask>=3.1
+pandas>=2.2
+numpy>=2.2
+sqlalchemy>=2.0
+bokeh>=3.7
+tqdm>=4.67
+garth>=0.5
+python-dotenv>=1.1
+python-dateutil>=2.9
+matplotlib>=3.10
+requests>=2.32
+psycopg2>=2.9
