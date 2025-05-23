@@ -26,9 +26,9 @@ class DatabaseManager:
                 environment = 'local'
         if db_uri is None:
             if environment == 'aws':
-                db_uri = os.environ.get('DATABASE_URI')
+                db_uri = os.environ.get('DATABASE_URL')
                 if not db_uri:
-                    raise ValueError("DATABASE_URI environment variable must be set in AWS.")
+                    raise ValueError("DATABASE_URL environment variable must be set in AWS.")
             else:
                 # Construct an absolute path relative to the project root.
                 base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../'))
