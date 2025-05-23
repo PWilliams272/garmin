@@ -20,11 +20,11 @@ jobs:
       - name: Create deployment package directory
         run: |
           mkdir lambda_build
-          cp garmin/garmin/scripts/lambda_update.py lambda_build/
-          cp garmin/garmin/api.py lambda_build/
-          cp garmin/garmin/updaters.py lambda_build/
-          cp -r garmin/garmin/pullers lambda_build/
-          cp -r garmin/garmin/db lambda_build/
+          cp garmin/scripts/lambda_update.py lambda_build/
+          cp garmin/api.py lambda_build/
+          cp garmin/updaters.py lambda_build/
+          cp -r garmin/pullers lambda_build/
+          cp -r garmin/db lambda_build/
           cp garmin/requirements-lambda.txt lambda_build/requirements.txt
 
       - name: Install dependencies
