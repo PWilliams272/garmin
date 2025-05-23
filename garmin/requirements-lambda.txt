@@ -1,5 +1,2 @@
-boto3
-botocore
 sqlalchemy
-pandas
 garth
