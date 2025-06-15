@@ -5,7 +5,7 @@ import pandas as pd
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
-from garmin.db.models import Base
+from garmin.io.models import Base
 
 # --- Generalized Database Manager ---
 class DatabaseManager:
