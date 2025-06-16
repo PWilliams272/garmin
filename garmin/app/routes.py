@@ -1,9 +1,9 @@
-from flask import Blueprint, render_template, request
+from flask import Blueprint, render_template, request, url_for, redirect
 from garmin.io.file_manager import FileManager
 import os
 
 bp = Blueprint(
-    'weight',
+    'garmin',
     __name__,
     template_folder="templates",
     static_folder="static"
@@ -22,6 +22,11 @@ DASHBOARD_FILES = [
     ("steps_timeseries_script.html", "bokeh_script_steps_timeseries"),
     ("steps_timeseries_div.html", "bokeh_div_steps_timeseries"),
 ]
+
+@bp.route('/')
+def index():
+    # Redirect /garmin to /garmin/metrics_dashboard
+    return redirect(url_for('garmin.metrics_dashboard'))
 
 @bp.route('/metrics_dashboard')
 def metrics_dashboard():
