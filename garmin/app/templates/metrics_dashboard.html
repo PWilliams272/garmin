@@ -5,10 +5,10 @@
     <h1>Metrics Dashboard</h1>
     <form id="refresh-form" method="get" action="{{ url_for('weight.metrics_dashboard') }}" style="margin-bottom: 2em;">
         <input type="hidden" name="refresh" value="1">
-        <button type="submit" class="btn btn-primary">Reload Data and Recreate Plots</button>
+        <button type="submit" class="btn btn-primary">Refresh Dashboard</button>
     </form>
     <div id="progress-indicator" style="display:none; font-weight:bold; margin-bottom:1em;">
-        <span id="progress-text">Recalculating<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span></span>
+        <span id="progress-text">Updating<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span></span>
     </div>
     <script>
     // Animated dot-dot-dot
