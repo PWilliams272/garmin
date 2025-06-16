@@ -2,13 +2,11 @@ from setuptools import setup, find_packages
 import os
 
 def load_requirements(filename='requirements.txt'):
-    """Load requirements from a file."""
     with open(filename, 'r', encoding='utf-8') as f:
         requirements = []
         for line in f:
-            # Remove comments and whitespace
             line = line.strip()
-            if line and not line.startswith('#'):
+            if line and not line.startswith('#') and not line.startswith('git+'):
                 requirements.append(line)
     return requirements
 
