@@ -28,7 +28,7 @@ def main():
     moving_averages = proc.calculate_moving_averages_all(
         processed_data,
         kernels=['gaussian', 'boxcar'],
-        bandwidths=[1] + list(range(7, 365, 7))
+        bandwidths=[1] + list(range(7, 150, 7))
     )
     for k, v in moving_averages.items():
         print("Saving moving averages for:", k)
