@@ -4,11 +4,11 @@ import pandas as pd
 from datetime import datetime, timedelta
 from tqdm import tqdm
 from typing import Callable
-from garmin.db.db_manager import DatabaseManager
+from garmin.io.db_manager import DatabaseManager
 from garmin.pullers.health import HealthPuller
 from garmin.pullers.health_detailed import HealthDetailedPuller
 from sqlalchemy.dialects.postgresql import insert
-from garmin.db.models import (
+from garmin.io.models import (
     HealthStats, Steps, Sleep, Stress, BodyBattery, HeartRate,
     HeartRateDetailed, SpO2Detailed, StepsDetailed, RespirationDetailed
 )
@@ -198,7 +198,7 @@ class DataUpdater:
     def _resolve_model_class(self, class_or_name: str | type) -> type:
         if isinstance(class_or_name, str):
             # Avoid circular imports
-            from garmin.db import models  
+            from garmin.io import models  
             model_class = getattr(models, class_or_name, None)
             if model_class is None:
                 raise ValueError(f"No model class named '{class_or_name}' found in models.")

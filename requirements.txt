@@ -10,3 +10,5 @@ python-dateutil>=2.9
 matplotlib>=3.10
 requests>=2.32
 psycopg2>=2.9
+fastparquet
+git+https://github.com/PWilliams272/myutils.git@prod

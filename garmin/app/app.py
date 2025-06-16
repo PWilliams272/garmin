@@ -1,17 +1,16 @@
 # garmin/app/app.py
 
 from flask import Flask, render_template, request
-from garmin.analysis.analysis import analysis_bp
 from garmin.app.routes import bp as weight_bp
 
 def create_app():
     app = Flask(__name__)
-    # Only register the weight_bp blueprint, not analysis_bp
     app.register_blueprint(weight_bp)
 
     @app.route('/')
     def index():
-        return '<h1>Garmin Web App is running!</h1>'
+        # Add a link to the metrics dashboard
+        return '''<h1>Garmin Web App is running!</h1>\n<a href="/metrics_dashboard">Go to Metrics Dashboard</a>'''
 
     return app
 

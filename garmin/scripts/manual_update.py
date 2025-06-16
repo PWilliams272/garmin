@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from garmin.updaters import DataUpdater
-from garmin.db.db_manager import DatabaseManager
+from garmin.io.db_manager import DatabaseManager
 from garmin.api import GarminSession
 
 def main():
