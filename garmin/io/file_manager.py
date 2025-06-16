@@ -76,3 +76,28 @@ class FileManager:
             return pd.read_csv(buffer)
         else:
             raise ValueError(f"Unsupported format: {format}")
+
+    def write_text(self, text, filename):
+        """Write a string to a file (local or S3)."""
+        if self.environment == 'aws':
+            import io
+            s3 = boto3.client('s3')
+            buffer = io.BytesIO(text.encode('utf-8'))
+            s3.upload_fileobj(buffer, self.s3_bucket, self._s3_key(filename))
+        else:
+            os.makedirs(os.path.dirname(self._local_path(filename)), exist_ok=True)
+            with open(self._local_path(filename), 'w', encoding='utf-8') as f:
+                f.write(text)
+
+    def read_text(self, filename):
+        """Read a string from a file (local or S3)."""
+        if self.environment == 'aws':
+            import io
+            s3 = boto3.client('s3')
+            buffer = io.BytesIO()
+            s3.download_fileobj(self.s3_bucket, self._s3_key(filename), buffer)
+            buffer.seek(0)
+            return buffer.read().decode('utf-8')
+        else:
+            with open(self._local_path(filename), 'r', encoding='utf-8') as f:
+                return f.read()
