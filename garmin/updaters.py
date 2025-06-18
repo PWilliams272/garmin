@@ -9,9 +9,20 @@ from garmin.pullers.health import HealthPuller
 from garmin.pullers.health_detailed import HealthDetailedPuller
 from sqlalchemy.dialects.postgresql import insert
 from garmin.io.models import (
-    HealthStats, Steps, Sleep, Stress, BodyBattery, HeartRate,
+    HealthStats, Steps, Sleep, Stress, BodyBattery, HeartRate, HRV, Respiration,
     HeartRateDetailed, SpO2Detailed, StepsDetailed, RespirationDetailed
 )
+
+
+def convert_nulls(df):
+    # Convert all NaT in datetime columns to None
+    for col in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            df[col] = df[col].apply(lambda x: x if pd.notnull(x) else None)
+    # Convert all remaining NaN to None for non-datetime columns
+    df = df.where(pd.notnull(df), None)
+    return df
+
 
 class DataUpdater:
     def __init__(
@@ -34,6 +45,8 @@ class DataUpdater:
             Stress: lambda **kwargs: self.health_puller.pull_data('stress', **kwargs),
             BodyBattery: lambda **kwargs: self.health_puller.pull_data('body_battery', **kwargs),
             HeartRate: lambda **kwargs: self.health_puller.pull_data('heart_rate', **kwargs),
+            HRV: lambda **kwargs: self.health_puller.pull_data('hrv', **kwargs),
+            Respiration: lambda **kwargs: self.health_puller.pull_data('respiration', **kwargs),
             HeartRateDetailed: lambda **kwargs: self.health_detailed_puller.pull_data('heart_rate', **kwargs),
             RespirationDetailed: lambda **kwargs: self.health_detailed_puller.pull_data('respiration', **kwargs),
             SpO2Detailed: lambda **kwargs: self.health_detailed_puller.pull_data('spo2', **kwargs),
@@ -46,11 +59,14 @@ class DataUpdater:
             Stress: self._update_daily_time_series,
             BodyBattery: self._update_daily_time_series,
             HeartRate: self._update_daily_time_series,
+            HRV: self._update_daily_time_series,
+            Respiration: self._update_daily_time_series,
             HeartRateDetailed: self._update_detailed_time_series,
             RespirationDetailed: self._update_detailed_time_series,
             SpO2Detailed: self._update_detailed_time_series,
             StepsDetailed: self._update_detailed_time_series,
         }
+
 
     def _update_daily_time_series(
         self,
@@ -114,7 +130,7 @@ class DataUpdater:
         pull_fn = self.pull_fn_map.get(model_class)
         if pull_fn is None:
             raise ValueError(f"No puller found for {model_class.__name__}")
-        
+
         today = datetime.today().date()
         session = self.db.Session()
 
@@ -166,6 +182,7 @@ class DataUpdater:
             if col in df.columns:
                 df[col] = pd.to_datetime(df[col]).dt.date
         df["date_time_utc"] = pd.to_datetime(df["date_time_utc"], utc=True)
+        df = convert_nulls(df)
 
         print(f"Upserting {len(df)} rows to {model_class.__tablename__}")
         try:
@@ -219,6 +236,7 @@ class DataUpdater:
     def update_all(self):
         model_class_list = [
             "HealthStats", "Steps", "Sleep", "Stress", "BodyBattery", "HeartRate",
+            "HRV", "Respiration",
             "HeartRateDetailed", "SpO2Detailed",
             "StepsDetailed", "RespirationDetailed"
         ]

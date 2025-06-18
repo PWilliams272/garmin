@@ -84,6 +84,32 @@ class BodyBattery(Base):
     high_body_battery = Column(Float)
     date_pulled = Column(Date)
 
+
+class HRV(Base):
+    __tablename__ = 'hrv'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    date = Column(Date, unique=True, nullable=False)
+    weekly_avg = Column(Float)
+    last_night_avg = Column(Float)
+    last_night_5_min_high = Column(Float)
+    baseline_low_upper = Column(Float)
+    baseline_balanced_low = Column(Float)
+    baseline_balanced_upper = Column(Float)
+    baseline_marker_value = Column(Float)
+    status = Column(String)
+    feedback_phrase = Column(String)
+    create_time_stamp = Column(DateTime)
+    date_pulled = Column(Date)
+
+class Respiration(Base):
+    __tablename__ = 'respiration'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    date = Column(Date, unique=True, nullable=False)
+    avg_waking_respiration = Column(Float)
+    avg_sleep_respiration = Column(Float)
+    date_pulled = Column(Date)
+
+
 class StepsDetailed(Base):
     __tablename__ = 'steps_detailed'
     id = Column(Integer, primary_key=True, autoincrement=True)

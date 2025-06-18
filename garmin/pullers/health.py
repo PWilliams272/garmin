@@ -102,6 +102,34 @@ class HealthPuller:
                 'values_field': "values",
                 'chunk_days': 28,
             },
+            'hrv': {
+                'url_template': "/hrv-service/hrv/daily/{start_date}/{end_date}",
+                'mapping': {
+                    "weeklyAvg": "weekly_avg",
+                    "lastNightAvg": "last_night_avg",
+                    "lastNight5MinHigh": "last_night_5_min_high",
+                    "baseline": "baseline",
+                    "status": "status",
+                    "feedbackPhrase": "feedback_phrase",
+                    "createTimeStamp": "create_time_stamp",
+                },
+                'response_path': ['hrvSummaries'],
+                'date_field': "calendarDate",
+                'values_field': "values",
+                'chunk_days': 365,
+                'post_processing': self._post_process_hrv,
+            },
+            'respiration': {
+                'url_template': "/usersummary-service/stats/respiration/daily/{start_date}/{end_date}",
+                'mapping': {
+                    "avgWakingRespiration": "avg_waking_respiration",
+                    "avgSleepRespiration": "avg_sleep_respiration",
+                },
+                'response_path': None,
+                'date_field': "calendarDate",
+                'values_field': "values",
+                'chunk_days': 28,
+            },
         }
 
     def _pull(self,
@@ -194,4 +222,23 @@ class HealthPuller:
         for col in ['weight', 'muscle_mass', 'bone_mass']:
             df[col] = df[col] * 0.00220462
         df['fat_mass'] = df['body_fat'] * df['weight'] / 100.
+        return df
+
+    def _post_process_hrv(self, df: pd.DataFrame) -> pd.DataFrame:
+        baseline_expanded = pd.json_normalize(df['baseline']).rename(columns={
+            'lowUpper': 'baseline_low_upper',
+            'balancedLow': 'baseline_balanced_low',
+            'balancedUpper': 'baseline_balanced_upper',
+            'markerValue': 'baseline_marker_value'
+        })
+        baseline_expanded.index = df.index
+        df = df.join(baseline_expanded)
+        df.drop(columns=['baseline'], inplace=True)
+        df['create_time_stamp'] = pd.to_datetime(df['create_time_stamp'])
+        df = df[[
+            'weekly_avg', 'last_night_avg', 'last_night_5_min_high',
+            'baseline_low_upper', 'baseline_balanced_low',
+            'baseline_balanced_upper', 'baseline_marker_value',
+            'status', 'feedback_phrase', 'create_time_stamp'
+        ]]
         return df
