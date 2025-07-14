@@ -2,4 +2,4 @@ sqlalchemy>=2.0
 tqdm>=4.67
 garth>=0.5
 psycopg2-binary
-bokeh==3.7.3
+git+https://github.com/PWilliams272/myutils.git@prod
