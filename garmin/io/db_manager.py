@@ -104,16 +104,32 @@ class DatabaseManager:
 
     def get_df(self, table_name):
         """
-        Retrieves all records from the table corresponding to model_class as a Pandas DataFrame.
-        
+        Retrieves all records from the named table as a Pandas DataFrame.
+
+        The table name is validated against ORM-registered tables so that no
+        user-supplied string is ever interpolated into SQL (prevents injection).
+
         Args:
-            model_class: The SQLAlchemy model class whose table should be read.
-        
+            table_name (str): Name of the table to read (e.g. 'sleep', 'hrv').
+
         Returns:
-            DataFrame: The table contents.
+            DataFrame: All rows in the table.
+
+        Raises:
+            ValueError: If table_name does not match any ORM-registered table.
         """
-        # Using read_sql with a simple SELECT query:
-        df = pd.read_sql(f"SELECT * FROM {table_name}", con=self.engine)
+        from sqlalchemy import select
+
+        try:
+            table_obj = next(
+                t for t in Base.metadata.tables.values() if t.name == table_name
+            )
+        except StopIteration:
+            valid = sorted(t.name for t in Base.metadata.tables.values())
+            raise ValueError(f"Unknown table {table_name!r}. Valid tables: {valid}")
+
+        with self.engine.connect() as conn:
+            df = pd.read_sql(select(table_obj), con=conn)
         return df
 
     def drop_table(self, model_class):
