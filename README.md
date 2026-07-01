@@ -36,8 +36,11 @@ Local token storage:
 - `GARMIN_USE_AWS_SECRETS=1`: force token storage to use Secrets Manager.
 - `GARMIN_AWS_SECRET_NAME=garmin/oauth2_token`: OAuth2 token secret name.
 - `AWS_REGION`: AWS region for Secrets Manager.
-- `DATABASE_URL`: database URL when running in AWS-backed mode.
 - `GARMIN_S3_BUCKET`: private Garmin bucket for curated parquet, processed outputs, and dashboard artifacts.
+
+Legacy only:
+
+- `DATABASE_URL`: only needed if you intentionally run the legacy database-backed path.
 
 Notes:
 
@@ -80,6 +83,8 @@ Run the updater locally against SQLite:
 source .venv/bin/activate && python -m garmin.scripts.manual_update
 ```
 
+The default updater entrypoint now writes curated parquet through the file-manager path. Locally that means `data/curated/...`; in Lambda that means S3 under the configured `GARMIN_S3_BUCKET`.
+
 Process curated daily parquet into processed outputs and moving averages:
 
 ```bash
@@ -110,7 +115,8 @@ source .venv/bin/activate && python -m garmin.scripts.bootstrap_aws_auth
 ```
 
 3. Set `GARMIN_USE_AWS_SECRETS=1` in Lambda.
-4. Keep full-login credentials out of Lambda unless you intentionally want a fallback recovery path.
+4. Set `GARMIN_S3_BUCKET` in Lambda so curated parquet and downstream artifacts write to the Garmin bucket.
+5. Keep full-login credentials out of Lambda unless you intentionally want a fallback recovery path.
 
 ## Current recommendation
 

@@ -69,6 +69,38 @@ def test_data_updater_can_write_daily_data_to_curated_store(tmp_path) -> None:
     assert list(saved["total_steps"]) == [9000, 9500]
 
 
+def test_curated_data_updater_does_not_construct_database_manager(tmp_path, monkeypatch) -> None:
+    store = CuratedDataStore(
+        file_manager=FileManager(environment="local", local_dir=str(tmp_path))
+    )
+
+    def fail_database_manager():
+        raise AssertionError("DatabaseManager should not be constructed for curated store updates")
+
+    class StubHealthPuller:
+        def pull_data(self, data_type: str, start_date: str, end_date: str) -> pd.DataFrame:
+            assert data_type == "steps"
+            return pd.DataFrame(
+                [
+                    {"date": "2024-01-01", "step_goal": 10000, "total_steps": 9000, "total_distance": 5.0},
+                ]
+            ).set_index(pd.to_datetime(["2024-01-01"]))
+
+    monkeypatch.setattr(updaters_module, "DatabaseManager", fail_database_manager)
+
+    updater = DataUpdater(
+        session=object(),
+        curated_store=store,
+        health_puller=StubHealthPuller(),
+        health_detailed_puller=object(),
+    )
+
+    updater.update(Steps, start_date="2024-01-01")
+
+    saved = store.load_daily("steps")
+    assert list(saved["total_steps"]) == [9000]
+
+
 def test_data_updater_can_resume_detailed_data_from_curated_status(tmp_path, monkeypatch) -> None:
     store = CuratedDataStore(
         file_manager=FileManager(environment="local", local_dir=str(tmp_path))

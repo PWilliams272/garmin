@@ -35,8 +35,11 @@ class DataUpdater:
         health_detailed_puller=None,
         activity_puller=None,
     ):
-        self.db = db_manager or DatabaseManager()
         self.curated_store = curated_store
+        if self.curated_store is not None:
+            self.db = db_manager
+        else:
+            self.db = db_manager or DatabaseManager()
         self.health_puller = health_puller or HealthPuller(session)
         self.health_detailed_puller = health_detailed_puller or HealthDetailedPuller(session)
         #self.activity_puller = activity_puller or ActivityPuller(session)
