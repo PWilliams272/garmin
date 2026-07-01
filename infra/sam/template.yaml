@@ -48,7 +48,6 @@ Resources:
           GARMIN_USE_AWS_SECRETS: '1'
           GARMIN_AWS_SECRET_NAME: !Ref GarminSecretName
           GARMIN_S3_BUCKET: !Ref GarminS3Bucket
-          AWS_REGION: !Ref AWS::Region
       Policies:
         - AWSLambdaBasicExecutionRole
         - Statement:

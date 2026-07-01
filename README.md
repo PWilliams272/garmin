@@ -35,12 +35,15 @@ Local token storage:
 
 - `GARMIN_USE_AWS_SECRETS=1`: force token storage to use Secrets Manager.
 - `GARMIN_AWS_SECRET_NAME=garmin/oauth2_token`: OAuth2 token secret name.
-- `AWS_REGION`: AWS region for Secrets Manager.
 - `GARMIN_S3_BUCKET`: private Garmin bucket for curated parquet, processed outputs, and dashboard artifacts.
 
 Legacy only:
 
 - `DATABASE_URL`: only needed if you intentionally run the legacy database-backed path.
+
+Notes:
+
+- Lambda already provides `AWS_REGION` automatically; do not try to set it manually in Lambda environment variables.
 
 Notes:
 

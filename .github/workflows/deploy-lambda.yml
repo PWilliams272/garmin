@@ -54,4 +54,4 @@ jobs:
         run: |
           aws lambda update-function-configuration \
             --function-name garmin-data-updater \
-            --environment 'Variables={GARMIN_USE_AWS_SECRETS=1,GARMIN_AWS_SECRET_NAME=garmin/oauth2_token,GARMIN_S3_BUCKET=my-garmin-data,AWS_REGION=us-east-2}'
+            --environment 'Variables={GARMIN_USE_AWS_SECRETS=1,GARMIN_AWS_SECRET_NAME=garmin/oauth2_token,GARMIN_S3_BUCKET=my-garmin-data}'
