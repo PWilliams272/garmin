@@ -5,6 +5,7 @@ from datetime import date
 import pandas as pd
 import pytest
 
+from garmin.data_processor.processor import GarminDataProcessor
 from garmin.io.curated_store import CuratedDataStore
 from garmin.io.file_manager import FileManager
 from garmin.scripts.manual_process_data import DAILY_DATASETS, load_curated_daily_inputs
@@ -97,3 +98,24 @@ def test_load_curated_daily_inputs_raises_when_any_dataset_is_missing(tmp_path) 
 
     with pytest.raises(ValueError, match='Missing curated daily datasets'):
         load_curated_daily_inputs(store)
+
+
+def test_processor_accepts_curated_inputs_without_sql_id_columns(tmp_path) -> None:
+    store = CuratedDataStore(
+        file_manager=FileManager(environment='local', local_dir=str(tmp_path))
+    )
+    for dataset in DAILY_DATASETS:
+        store.merge_daily(dataset, _build_daily_dataset(dataset))
+
+    raw_inputs = load_curated_daily_inputs(store)
+    processed = GarminDataProcessor().process_all(raw_inputs)
+
+    assert set(processed) == {
+        'health_stats',
+        'sleep',
+        'steps',
+        'stress',
+        'heart_rate',
+        'body_battery',
+    }
+    assert 'id' not in processed['health_stats'].columns

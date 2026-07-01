@@ -18,12 +18,16 @@ class GarminDataProcessor:
         'body_battery': ['low_body_battery', 'high_body_battery'],
     }
 
+    @staticmethod
+    def _drop_storage_columns(df: pd.DataFrame) -> pd.DataFrame:
+        return df.drop(columns=['id', 'date_pulled'], errors='ignore')
+
     def process_health_stats(self, df):
         """
         Processes health stats DataFrame to compute additional metrics.
         """
         df = df.copy()
-        df = df.drop(columns=['id', 'date_pulled'])
+        df = self._drop_storage_columns(df)
         df['date'] = pd.to_datetime(df['date'])
         for col in ['body_fat', 'bmi', 'fat_mass']:
             df.loc[df[col] == 0, col] = np.nan
@@ -34,7 +38,7 @@ class GarminDataProcessor:
         Processes sleep stats DataFrame to compute additional metrics.
         """
         df = df.copy()
-        df = df.drop(columns=['id', 'date_pulled'])
+        df = self._drop_storage_columns(df)
         df['date'] = pd.to_datetime(df['date'])
         for col in ['total_sleep_time', 'rem_time', 'deep_time', 'light_time', 'awake_time']:
             df[col] /= 60 * 60
@@ -64,7 +68,7 @@ class GarminDataProcessor:
         Processes steps DataFrame to compute additional metrics.
         """
         df = df.copy()
-        df = df.drop(columns=['id', 'date_pulled'])
+        df = self._drop_storage_columns(df)
         df['date'] = pd.to_datetime(df['date'])
         return df
     
@@ -73,7 +77,7 @@ class GarminDataProcessor:
         Processes steps DataFrame to compute additional metrics.
         """
         df = df.copy()
-        df = df.drop(columns=['id', 'date_pulled'])
+        df = self._drop_storage_columns(df)
         df['date'] = pd.to_datetime(df['date'])
         for col in ['high_stress_duration', 'low_stress_duration', 'rest_stress_duration']:
             df[col] /= 3600.
@@ -84,7 +88,7 @@ class GarminDataProcessor:
         Processes heart rate DataFrame to compute additional metrics.
         """
         df = df.copy()
-        df = df.drop(columns=['id', 'date_pulled'])
+        df = self._drop_storage_columns(df)
         df['date'] = pd.to_datetime(df['date'])
         return df
     
@@ -93,7 +97,7 @@ class GarminDataProcessor:
         Processes body battery DataFrame to compute additional metrics.
         """
         df = df.copy()
-        df = df.drop(columns=['id', 'date_pulled'])
+        df = self._drop_storage_columns(df)
         df['date'] = pd.to_datetime(df['date'])
         return df
 

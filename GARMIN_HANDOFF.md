@@ -20,16 +20,60 @@ If a change affects how the website integrates Garmin outputs, call out the expe
 
 ## Current Verified State
 
-- `garmin/api/` is the current Garmin Connect session boundary.
-- The repo no longer imports `garth` in runtime package code, but the replacement login and refresh flow is still incomplete.
-- `src/garmin/scripts/lambda_update.py` still creates a `DatabaseManager` and writes through the database-backed update path.
-- `src/garmin/io/db_manager.py` still points AWS execution at `DATABASE_URL` and local execution at `data/garmin.db`.
-- `src/garmin/io/file_manager.py` already provides a local-versus-S3 file abstraction for dataframe and text artifacts.
-- `garmin/app/routes.py` currently serves dashboard HTML artifacts by pulling them from S3 into local cache files.
+- `src/garmin/api/` is the Garmin Connect session boundary and runtime package code no longer imports `garth`.
+- `src/garmin/scripts/manual_update.py` and `src/garmin/scripts/lambda_update.py` now default to a `CuratedDataStore` write path backed by `FileManager` instead of constructing `DatabaseManager` directly.
+- `src/garmin/updaters.py` can now persist daily datasets, detailed per-day parquet files, and detailed pull status through the curated store path.
+- `src/garmin/scripts/manual_process_data.py` now reads curated daily parquet inputs instead of querying the SQL tables directly.
+- `src/garmin/io/db_manager.py` still points AWS execution at `DATABASE_URL` and local execution at `data/garmin.db`, but that database-backed path is now legacy rather than the default updater entrypoint behavior.
+- `src/garmin/io/file_manager.py` provides the local-versus-S3 file abstraction used by curated data, processed parquet outputs, and dashboard artifacts.
+- `src/garmin/app/routes.py` currently serves dashboard HTML artifacts by pulling them from S3 into local cache files.
 - Live RDS inspection showed the populated Garmin-like historical tables are in the `public` schema, while the `garmin` schema itself is effectively empty.
-- `pyproject.toml` and `setup.py` both define package metadata.
-- `pyproject.toml` currently claims a `src` layout even though the actual package is at `garmin/` in the repo root.
-- `README.md` is empty and there is no visible `tests/` directory yet.
+- `pyproject.toml` is aligned with the real `src/` package layout, `setup.py` is reduced to a compatibility shim, and a focused `tests/` directory now exists.
+- The `my-garmin-data` bucket currently contains legacy `processed/`, `moving_averages/`, and `dashboards/` prefixes; the new `curated/` prefix is expected to appear once the updated updater path is run end to end.
+
+## AWS CLI Setup On This Machine
+
+Use the existing local AWS CLI setup. Do not create or store credentials in this repo.
+
+Verified environment facts:
+
+- AWS CLI is installed locally.
+- Primary AWS account ID: `545009868532`
+- Default working region: `us-east-2`
+- Useful local profiles already present: `personal`, `garmin`
+
+Profile guidance:
+
+- For S3 bucket inspection and S3 object work in this repo, prefer `--profile personal --region us-east-2`.
+- For Garmin Lambda inspection, `--profile garmin --region us-east-2` is acceptable, though `personal` may also work.
+- If the `garmin` profile cannot see a bucket or command output looks incomplete, retry with `personal` before assuming the resource is absent.
+
+Verified Garmin-relevant resources:
+
+- Lambda function: `garmin-data-updater`
+- Buckets: `my-garmin-data`, `my-garmin-config`
+
+Recommended verification commands:
+
+1. `aws sts get-caller-identity --profile personal --region us-east-2`
+2. `aws s3 ls --profile personal --region us-east-2`
+3. `aws s3 ls s3://my-garmin-data --profile personal --region us-east-2`
+4. `aws s3 ls s3://my-garmin-config --profile personal --region us-east-2`
+5. `aws lambda list-functions --profile garmin --region us-east-2 --query 'Functions[?FunctionName==\`garmin-data-updater\`].FunctionName' --output table`
+
+Useful working commands for this repo:
+
+- download an object: `aws s3 cp s3://my-garmin-data/<key> ./tmp/<filename> --profile personal --region us-east-2`
+- upload an object: `aws s3 cp ./local-file s3://my-garmin-data/<key> --profile personal --region us-east-2`
+- sync a folder to a prefix: `aws s3 sync ./local-dir s3://my-garmin-data/<prefix>/ --profile personal --region us-east-2`
+- inspect a recent Lambda configuration: `aws lambda get-function-configuration --function-name garmin-data-updater --profile garmin --region us-east-2`
+
+Guardrails:
+
+- Keep credentials only in `~/.aws` or approved AWS secret stores.
+- Do not paste secrets, tokens, or raw environment values into repo files.
+- Prefer the AWS CLI over the console for repeatable inspection.
+- If you need to inspect legacy RDS state during migration work, use the existing machine-local `rds-tunnel` alias rather than trying to solve that through the AWS CLI.
 
 ## Main Problems To Keep In Mind
 
@@ -95,7 +139,9 @@ Current migration meaning:
 Suggested S3 shape:
 
 - `s3://<garmin-bucket>/raw/<dataset>/<date-partition>/...`
-- `s3://<garmin-bucket>/curated/<dataset>/year=YYYY/month=MM/...parquet`
+- `s3://<garmin-bucket>/curated/daily/<dataset>.parquet`
+- `s3://<garmin-bucket>/curated/detailed/<dataset>/query_date=YYYY-MM-DD.parquet`
+- `s3://<garmin-bucket>/curated/metadata/detailed_status/<dataset>.parquet`
 - `s3://<garmin-bucket>/artifacts/dashboards/...`
 - `s3://<garmin-bucket>/viewer-cache/...json`
 

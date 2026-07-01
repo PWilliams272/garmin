@@ -17,6 +17,48 @@
 - Optional quality commands when dev dependencies are installed: `source .venv/bin/activate && pip install -e .[dev]`, `source .venv/bin/activate && ruff check .`, `source .venv/bin/activate && mypy src/garmin`, and `source .venv/bin/activate && pytest`
 - Deployment processes: `.github/workflows/deploy-ec2.yml` deploys the repo to EC2 on `prod`, and `.github/workflows/deploy-lambda.yml` deploys the Lambda updater on `prod`
 
+## AWS CLI Access
+
+- AWS CLI is already installed on this machine.
+- Verified primary AWS account ID: `545009868532`
+- Verified default region for current work: `us-east-2`
+- Do not create new credentials in this repo. Use the existing local AWS CLI profiles from `~/.aws/config` and `~/.aws/credentials`.
+- For Garmin repo S3 work, prefer `--profile personal --region us-east-2`.
+- The `garmin` profile can list Garmin-related Lambda resources, but earlier discovery showed it did not have the same S3 bucket visibility as `personal`.
+- If a command fails under `garmin`, retry with `personal` before assuming the resource is missing.
+
+Verified useful profiles on this machine:
+
+- `personal`
+- `garmin`
+
+Verified Garmin-relevant AWS resources:
+
+- Lambda function: `garmin-data-updater`
+- S3 buckets: `my-garmin-data`, `my-garmin-config`
+
+Safe AWS CLI verification commands:
+
+- `aws sts get-caller-identity --profile personal --region us-east-2`
+- `aws s3 ls --profile personal --region us-east-2`
+- `aws s3 ls s3://my-garmin-data --profile personal --region us-east-2`
+- `aws s3 ls s3://my-garmin-config --profile personal --region us-east-2`
+- `aws lambda list-functions --profile garmin --region us-east-2 --query 'Functions[?FunctionName==\`garmin-data-updater\`].FunctionName' --output table`
+
+Useful Garmin bucket commands:
+
+- list top-level prefixes: `aws s3 ls s3://my-garmin-data --profile personal --region us-east-2`
+- copy down a local sample: `aws s3 cp s3://my-garmin-data/<key> ./tmp/<filename> --profile personal --region us-east-2`
+- upload a file: `aws s3 cp ./local-file s3://my-garmin-data/<key> --profile personal --region us-east-2`
+- sync a local folder: `aws s3 sync ./local-dir s3://my-garmin-data/<prefix>/ --profile personal --region us-east-2`
+
+Access rules:
+
+- Keep secrets out of git and out of markdown notes.
+- Do not paste access keys, secret keys, session tokens, or raw `.env` values into the repo.
+- Prefer CLI inspection over console clicking when tracing buckets, Lambdas, or logs.
+- If legacy database inspection is needed during migration planning, that uses the existing machine-local `rds-tunnel` SSH alias rather than the AWS CLI itself.
+
 ## Branch Workflow
 
 - Default stable branch: `main`
@@ -43,12 +85,14 @@
 ## Known Verified Versus Planned Items
 
 - Verified: `src/garmin/api/` is the current Garmin Connect login and session boundary.
-- Verified: runtime package code no longer imports `garth`, but the repo-owned login and refresh replacement is still in progress.
-- Verified: `src/garmin/scripts/lambda_update.py` still instantiates `DatabaseManager` and writes through the RDS-backed path today.
+- Verified: runtime package code no longer imports `garth`, and the repo-owned login and refresh path is the active auth boundary.
+- Verified: `src/garmin/scripts/manual_update.py` and `src/garmin/scripts/lambda_update.py` now default to the curated parquet store path through `FileManager` and `CuratedDataStore`.
+- Verified: `src/garmin/scripts/manual_process_data.py` now reads curated daily parquet inputs instead of querying SQL tables directly.
 - Verified: `src/garmin/app/routes.py` currently serves dashboard HTML artifacts through local cache plus S3 fetches.
-- Verified: `pyproject.toml` and `setup.py` both define packaging metadata, and `pyproject.toml` currently claims a `src` layout even though the package lives under `garmin/` at the repo root.
-- Verified: `README.md` is effectively empty and there is no visible `tests/` directory yet.
+- Verified: `pyproject.toml` is aligned with the real `src/` layout and `setup.py` is now a compatibility shim.
+- Verified: `README.md` and the focused `tests/` directory now cover the repo-owned auth flow, curated storage migration path, and targeted updater behavior.
 - Verified: live RDS inspection showed the populated Garmin-like historical tables are currently in the `public` schema, while the `garmin` schema is effectively empty.
+- Verified: `my-garmin-data` currently contains legacy `processed/`, `moving_averages/`, and `dashboards/` prefixes, and the new `curated/` prefix has not been populated yet.
 - Planned: move Garmin analytical history off the shared RDS and toward private S3-backed analytical files.
 - Planned: reduce the website's dependence on the embedded/submodule copy in `aws_flask_site`.
 
