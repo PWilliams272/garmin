@@ -171,6 +171,9 @@ class DataUpdater:
         start_date: str = "2015-01-01",
         batch_size: int = 100,
     ):
+        if self.curated_store is not None:
+            return self._update_detailed_time_series_curated(model_class, start_date=start_date)
+
         pull_fn = self.pull_fn_map.get(model_class)
         if pull_fn is None:
             raise ValueError(f"No puller found for {model_class.__name__}")
@@ -255,6 +258,93 @@ class DataUpdater:
             print(f"Error during upsert of {model_class.__tablename__}:", e)
         finally:
             session.close()
+
+    def _update_detailed_time_series_curated(
+        self,
+        model_class,
+        start_date: str = "2015-01-01",
+    ):
+        pull_fn = self.pull_fn_map.get(model_class)
+        if pull_fn is None:
+            raise ValueError(f"No puller found for {model_class.__name__}")
+
+        dataset_name = model_class.__tablename__
+        today = datetime.today().date()
+
+        existing_status_df = self.curated_store.load_detailed_status(dataset_name)
+        existing_status: dict[datetime.date, str] = {}
+        if not existing_status_df.empty and {"query_date", "pull_status"}.issubset(existing_status_df.columns):
+            existing_status = {
+                pd.to_datetime(row.query_date).date(): row.pull_status
+                for row in existing_status_df.itertuples(index=False)
+            }
+
+        date_list = pd.date_range(start=start_date, end=today).date
+        to_pull = [
+            d.strftime('%Y-%m-%d') for d in date_list
+            if existing_status.get(d) not in {"fetched", "no_data"}
+        ]
+        if not to_pull:
+            print(f"No dates to pull for {dataset_name}.")
+            return
+
+        df = pull_fn(dates=to_pull)
+        status_map = getattr(self.health_detailed_puller, "_last_pull_status", {})
+        fetched_dates = status_map.get("fetched", [])
+        no_data_dates = status_map.get("no_data", [])
+        denied_dates = status_map.get("denied", [])
+
+        if not df.empty:
+            detailed_df = df.copy()
+            detailed_df["query_date"] = pd.to_datetime(detailed_df["query_date"]).dt.date
+            if "date_time_utc" in detailed_df.columns:
+                detailed_df["date_time_utc"] = pd.to_datetime(detailed_df["date_time_utc"], utc=True)
+            detailed_df["date_pulled"] = today
+            detailed_df["pull_status"] = detailed_df["query_date"].apply(
+                lambda d: "fetched" if d.strftime("%Y-%m-%d") in fetched_dates else "unknown"
+            )
+            detailed_df = convert_nulls(detailed_df)
+
+            for query_date, day_df in detailed_df.groupby("query_date", sort=True):
+                self.curated_store.write_detailed_day(
+                    dataset_name,
+                    query_date.isoformat(),
+                    day_df.reset_index(drop=True),
+                )
+
+        status_rows = [
+            {
+                "query_date": pulled_date,
+                "date_pulled": today,
+                "pull_status": "fetched",
+            }
+            for pulled_date in fetched_dates
+        ]
+        status_rows.extend(
+            {
+                "query_date": pulled_date,
+                "date_pulled": today,
+                "pull_status": "no_data",
+            }
+            for pulled_date in no_data_dates
+        )
+        status_rows.extend(
+            {
+                "query_date": pulled_date,
+                "date_pulled": today,
+                "pull_status": "denied",
+            }
+            for pulled_date in denied_dates
+        )
+
+        if status_rows:
+            self.curated_store.merge_detailed_status(dataset_name, pd.DataFrame(status_rows))
+
+        print(
+            "Saved curated detailed data for "
+            f"{dataset_name}: {len(fetched_dates)} fetched, "
+            f"{len(no_data_dates)} no_data, {len(denied_dates)} denied."
+        )
 
     def _resolve_model_class(self, class_or_name: str | type) -> type:
         if isinstance(class_or_name, str):
