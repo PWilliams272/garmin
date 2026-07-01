@@ -40,11 +40,12 @@ class FileManager:
         if self.environment == 'aws':
             self._write_df_s3(df, filename, format)
         else:
-            os.makedirs(self.local_dir, exist_ok=True)
+            local_path = self._local_path(filename)
+            os.makedirs(os.path.dirname(local_path), exist_ok=True)
             if format == 'parquet':
-                df.to_parquet(self._local_path(filename), index=False)
+                df.to_parquet(local_path, index=False)
             elif format == 'csv':
-                df.to_csv(self._local_path(filename), index=False)
+                df.to_csv(local_path, index=False)
             else:
                 raise ValueError(f"Unsupported format: {format}")
 

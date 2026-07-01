@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from tqdm import tqdm
 from typing import Callable
 from garmin.io.db_manager import DatabaseManager
+from garmin.io.curated_store import CuratedDataStore
 from garmin.pullers.health import HealthPuller
 from garmin.pullers.health_detailed import HealthDetailedPuller
 from sqlalchemy.dialects.postgresql import insert
@@ -29,11 +30,13 @@ class DataUpdater:
         self,
         session,
         db_manager=None,
+        curated_store=None,
         health_puller=None,
         health_detailed_puller=None,
         activity_puller=None,
     ):
         self.db = db_manager or DatabaseManager()
+        self.curated_store = curated_store
         self.health_puller = health_puller or HealthPuller(session)
         self.health_detailed_puller = health_detailed_puller or HealthDetailedPuller(session)
         #self.activity_puller = activity_puller or ActivityPuller(session)
@@ -74,6 +77,9 @@ class DataUpdater:
         start_date: str = "2015-01-01",
         batch_size: int = 100,
     ):
+        if self.curated_store is not None:
+            return self._update_daily_time_series_curated(model_class, start_date=start_date)
+
         pull_fn = self.pull_fn_map.get(model_class)
         if pull_fn is None:
             raise ValueError(f"No puller found for {model_class.__name__}")
@@ -120,6 +126,44 @@ class DataUpdater:
             session.close()
 
         print(f"Upserted {len(df)} rows into {model_class.__tablename__}.")
+
+    def _update_daily_time_series_curated(
+        self,
+        model_class,
+        start_date: str = "2015-01-01",
+    ):
+        pull_fn = self.pull_fn_map.get(model_class)
+        if pull_fn is None:
+            raise ValueError(f"No puller found for {model_class.__name__}")
+
+        dataset_name = model_class.__tablename__
+        existing_df = self.curated_store.load_daily(dataset_name)
+        if not existing_df.empty and "date" in existing_df.columns:
+            last_date = pd.to_datetime(existing_df["date"]).dt.date.max()
+            start_date = last_date.strftime("%Y-%m-%d")
+
+        today = datetime.today().date()
+        df = pull_fn(start_date=start_date, end_date=today.strftime("%Y-%m-%d"))
+        if df.empty:
+            print(f"No {dataset_name} data returned from Garmin.")
+            return
+
+        normalized = df.copy()
+        if isinstance(normalized.index, pd.DatetimeIndex):
+            if "date" not in normalized.columns:
+                normalized = normalized.reset_index()
+                index_column = normalized.columns[0]
+                normalized["date"] = pd.to_datetime(normalized[index_column]).dt.date
+                if index_column != "date":
+                    normalized = normalized.drop(columns=[index_column])
+            else:
+                normalized["date"] = pd.to_datetime(normalized["date"]).dt.date
+        else:
+            normalized["date"] = pd.to_datetime(normalized["date"]).dt.date
+        normalized["date_pulled"] = today
+
+        merged = self.curated_store.merge_daily(dataset_name, normalized)
+        print(f"Saved {len(merged)} curated rows for {dataset_name}.")
 
     def _update_detailed_time_series(
         self,
