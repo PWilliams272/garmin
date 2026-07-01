@@ -4,6 +4,8 @@ data/
 .env
 .venv/
 __pycache__/
+.coverage
+.pytest_cache/
 garmin_project.egg-info/
 garmin.egg-info/
 notebooks/

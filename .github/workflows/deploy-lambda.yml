@@ -20,8 +20,8 @@ jobs:
       - name: Create deployment package directory
         run: |
           mkdir lambda_build
-          rsync -av --exclude 'app/' garmin/ lambda_build/garmin/
-          cp garmin/requirements-lambda.txt lambda_build/requirements.txt
+          rsync -av --exclude 'app/' src/garmin/ lambda_build/garmin/
+          cp src/garmin/requirements-lambda.txt lambda_build/requirements.txt
 
       - name: Install dependencies
         run: |

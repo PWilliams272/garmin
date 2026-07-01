@@ -48,7 +48,13 @@ Notes:
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e .
+```
+
+For test and lint tooling:
+
+```bash
+pip install -e .[dev]
 ```
 
 Suggested local `.env` values:
@@ -82,7 +88,7 @@ Detailed backfill behavior:
 Validate imports/bytecode:
 
 ```bash
-source .venv/bin/activate && python -m compileall garmin
+source .venv/bin/activate && python -m compileall src/garmin
 ```
 
 ## Bootstrapping Lambda tokens

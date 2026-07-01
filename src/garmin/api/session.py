@@ -7,6 +7,7 @@ from getpass import getpass
 
 from dotenv import load_dotenv
 
+from .._paths import get_data_dir
 from .auth import GarminAuthenticator
 from .client import GarminConnectClient
 from .exceptions import (
@@ -32,9 +33,7 @@ class GarminSession:
         domain: str = "garmin.com",
     ) -> None:
         if data_dir is None:
-            data_dir = os.path.abspath(
-                os.path.join(os.path.dirname(__file__), "../../data")
-            )
+            data_dir = str(get_data_dir())
         self.data_dir = data_dir
         self.session_dir = session_dir or garth_home or os.path.join(
             self.data_dir, "sessions", "garmin_connect"

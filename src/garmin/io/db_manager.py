@@ -5,6 +5,7 @@ import pandas as pd
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
+from garmin._paths import get_data_dir, get_repo_root
 from garmin.io.models import Base
 
 
@@ -41,8 +42,8 @@ class DatabaseManager:
                     raise ValueError("DATABASE_URL environment variable must be set in AWS.")
             else:
                 # Construct an absolute path relative to the project root.
-                base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../'))
-                db_path = os.path.join(base_dir, 'data', 'garmin.db')
+                base_dir = str(get_repo_root())
+                db_path = os.path.join(str(get_data_dir()), 'garmin.db')
                 db_uri = f'sqlite:///{db_path}'
         self.engine = create_engine(db_uri)
         self.Session = sessionmaker(bind=self.engine)

@@ -2,6 +2,8 @@ import os
 import pandas as pd
 import boto3
 
+from garmin._paths import get_data_dir
+
 
 def _resolve_runtime_environment() -> str:
     """Resolve whether file IO should use local disk or AWS resources."""
@@ -22,7 +24,7 @@ class FileManager:
         if environment is None:
             environment = _resolve_runtime_environment()
         self.environment = environment
-        self.local_dir = local_dir or os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data'))
+        self.local_dir = local_dir or str(get_data_dir())
         self.s3_bucket = s3_bucket or os.environ.get('GARMIN_S3_BUCKET')
         self.s3_prefix = s3_prefix or ''
         if self.environment == 'aws' and boto3 is None:

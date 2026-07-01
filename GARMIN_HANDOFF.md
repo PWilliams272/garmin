@@ -22,9 +22,9 @@ If a change affects how the website integrates Garmin outputs, call out the expe
 
 - `garmin/api/` is the current Garmin Connect session boundary.
 - The repo no longer imports `garth` in runtime package code, but the replacement login and refresh flow is still incomplete.
-- `garmin/scripts/lambda_update.py` still creates a `DatabaseManager` and writes through the database-backed update path.
-- `garmin/io/db_manager.py` still points AWS execution at `DATABASE_URL` and local execution at `data/garmin.db`.
-- `garmin/io/file_manager.py` already provides a local-versus-S3 file abstraction for dataframe and text artifacts.
+- `src/garmin/scripts/lambda_update.py` still creates a `DatabaseManager` and writes through the database-backed update path.
+- `src/garmin/io/db_manager.py` still points AWS execution at `DATABASE_URL` and local execution at `data/garmin.db`.
+- `src/garmin/io/file_manager.py` already provides a local-versus-S3 file abstraction for dataframe and text artifacts.
 - `garmin/app/routes.py` currently serves dashboard HTML artifacts by pulling them from S3 into local cache files.
 - Live RDS inspection showed the populated Garmin-like historical tables are in the `public` schema, while the `garmin` schema itself is effectively empty.
 - `pyproject.toml` and `setup.py` both define package metadata.
@@ -184,8 +184,8 @@ Recommended improvements:
 
 Good first test targets:
 
-- `garmin/io/file_manager.py`
-- `garmin/io/db_manager.py` behavior that will remain during migration
+- `src/garmin/io/file_manager.py`
+- `src/garmin/io/db_manager.py` behavior that will remain during migration
 - updater logic that decides what to fetch and what to upsert or emit
 
 ## Networking And AWS Direction
@@ -231,6 +231,6 @@ Do not try to do everything at once. Treat these as parallel but separable works
 
 1. Read `.github/copilot-instructions.md`, this file, and `DATA_STORAGE_NOTES.md`.
 2. Verify how `garth` is currently failing and what token behavior must be preserved.
-3. Inventory every place runtime dependencies are declared: `pyproject.toml`, `setup.py`, `requirements.txt`, and `garmin/requirements-lambda.txt`.
+3. Inventory every place runtime dependencies are declared: `pyproject.toml`, `setup.py`, `requirements.txt`, and `src/garmin/requirements-lambda.txt`.
 4. Determine whether deploy workflows truly need the current packaging duplication.
 5. Propose the first safe change in one workstream only, rather than combining scraper replacement, packaging cleanup, and storage migration in the same first patch.

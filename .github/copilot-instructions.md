@@ -11,9 +11,10 @@
 
 ## Run And Validation
 
+- Install command for local development: `source .venv/bin/activate && pip install -e .`
 - Main local run command: `source .venv/bin/activate && python -m garmin.app.app`
-- Main validation command: `source .venv/bin/activate && python -m compileall garmin`
-- Optional quality commands when dev dependencies are installed: `source .venv/bin/activate && ruff check .`, `source .venv/bin/activate && mypy garmin`, and `source .venv/bin/activate && pytest`
+- Main validation command: `source .venv/bin/activate && python -m compileall src/garmin`
+- Optional quality commands when dev dependencies are installed: `source .venv/bin/activate && pip install -e .[dev]`, `source .venv/bin/activate && ruff check .`, `source .venv/bin/activate && mypy src/garmin`, and `source .venv/bin/activate && pytest`
 - Deployment processes: `.github/workflows/deploy-ec2.yml` deploys the repo to EC2 on `prod`, and `.github/workflows/deploy-lambda.yml` deploys the Lambda updater on `prod`
 
 ## Branch Workflow
@@ -27,13 +28,13 @@
 ## Important Paths
 
 - Current repo-only handoff: `GARMIN_HANDOFF.md`
-- App entrypoint: `garmin/app/app.py`
-- Website-facing routes: `garmin/app/routes.py`
-- Garmin session and scraper boundary: `garmin/api/`
-- Core IO and S3 boundary: `garmin/io/file_manager.py`
-- Current database boundary: `garmin/io/db_manager.py`
-- Current updater flow: `garmin/updaters.py`
-- Lambda deployment requirements: `garmin/requirements-lambda.txt`
+- App entrypoint: `src/garmin/app/app.py`
+- Website-facing routes: `src/garmin/app/routes.py`
+- Garmin session and scraper boundary: `src/garmin/api/`
+- Core IO and S3 boundary: `src/garmin/io/file_manager.py`
+- Current database boundary: `src/garmin/io/db_manager.py`
+- Current updater flow: `src/garmin/updaters.py`
+- Lambda deployment requirements: `src/garmin/requirements-lambda.txt`
 - Packaging metadata: `pyproject.toml`, `setup.py`, `requirements.txt`
 - Deployment workflows: `.github/workflows/deploy-ec2.yml`, `.github/workflows/deploy-lambda.yml`
 - Data and generated artifacts: `data/`
@@ -41,10 +42,10 @@
 
 ## Known Verified Versus Planned Items
 
-- Verified: `garmin/api/` is the current Garmin Connect login and session boundary.
+- Verified: `src/garmin/api/` is the current Garmin Connect login and session boundary.
 - Verified: runtime package code no longer imports `garth`, but the repo-owned login and refresh replacement is still in progress.
-- Verified: `garmin/scripts/lambda_update.py` still instantiates `DatabaseManager` and writes through the RDS-backed path today.
-- Verified: `garmin/app/routes.py` currently serves dashboard HTML artifacts through local cache plus S3 fetches.
+- Verified: `src/garmin/scripts/lambda_update.py` still instantiates `DatabaseManager` and writes through the RDS-backed path today.
+- Verified: `src/garmin/app/routes.py` currently serves dashboard HTML artifacts through local cache plus S3 fetches.
 - Verified: `pyproject.toml` and `setup.py` both define packaging metadata, and `pyproject.toml` currently claims a `src` layout even though the package lives under `garmin/` at the repo root.
 - Verified: `README.md` is effectively empty and there is no visible `tests/` directory yet.
 - Verified: live RDS inspection showed the populated Garmin-like historical tables are currently in the `public` schema, while the `garmin` schema is effectively empty.
