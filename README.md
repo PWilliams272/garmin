@@ -37,6 +37,7 @@ Local token storage:
 - `GARMIN_AWS_SECRET_NAME=garmin/oauth2_token`: OAuth2 token secret name.
 - `AWS_REGION`: AWS region for Secrets Manager.
 - `DATABASE_URL`: database URL when running in AWS-backed mode.
+- `GARMIN_S3_BUCKET`: private Garmin bucket for curated parquet, processed outputs, and dashboard artifacts.
 
 Notes:
 
@@ -78,6 +79,14 @@ Run the updater locally against SQLite:
 ```bash
 source .venv/bin/activate && python -m garmin.scripts.manual_update
 ```
+
+Process curated daily parquet into processed outputs and moving averages:
+
+```bash
+source .venv/bin/activate && python -m garmin.scripts.manual_process_data
+```
+
+This processing step now reads curated daily parquet from the active file-manager path instead of querying the SQL tables directly.
 
 Detailed backfill behavior:
 
