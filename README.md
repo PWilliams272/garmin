@@ -39,7 +39,7 @@ Local token storage:
 
 Legacy only:
 
-- `DATABASE_URL`: only needed if you intentionally run the legacy database-backed path.
+- `DATABASE_URL`: only needed if you intentionally run the legacy database-backed path; the curated S3-backed Lambda flow does not set or use it.
 
 Notes:
 

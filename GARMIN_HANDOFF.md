@@ -24,12 +24,12 @@ If a change affects how the website integrates Garmin outputs, call out the expe
 - `src/garmin/scripts/manual_update.py` and `src/garmin/scripts/lambda_update.py` now default to a `CuratedDataStore` write path backed by `FileManager` instead of constructing `DatabaseManager` directly.
 - `src/garmin/updaters.py` can now persist daily datasets, detailed per-day parquet files, and detailed pull status through the curated store path.
 - `src/garmin/scripts/manual_process_data.py` now reads curated daily parquet inputs instead of querying the SQL tables directly.
-- `src/garmin/io/db_manager.py` still points AWS execution at `DATABASE_URL` and local execution at `data/garmin.db`, but that database-backed path is now legacy rather than the default updater entrypoint behavior.
+- `src/garmin/io/db_manager.py` still supports `DATABASE_URL` in AWS and `data/garmin.db` locally for the legacy database-backed path, but the deployed updater now runs against curated S3 without setting `DATABASE_URL`.
 - `src/garmin/io/file_manager.py` provides the local-versus-S3 file abstraction used by curated data, processed parquet outputs, and dashboard artifacts.
 - `src/garmin/app/routes.py` currently serves dashboard HTML artifacts by pulling them from S3 into local cache files.
 - Live RDS inspection showed the populated Garmin-like historical tables are in the `public` schema, while the `garmin` schema itself is effectively empty.
 - `pyproject.toml` is aligned with the real `src/` package layout, `setup.py` is reduced to a compatibility shim, and a focused `tests/` directory now exists.
-- The `my-garmin-data` bucket currently contains legacy `processed/`, `moving_averages/`, and `dashboards/` prefixes; the new `curated/` prefix is expected to appear once the updated updater path is run end to end.
+- The `my-garmin-data` bucket now contains curated daily parquet outputs plus curated detailed-status manifests from the updated updater path, alongside the legacy `processed/`, `moving_averages/`, and `dashboards/` prefixes.
 
 ## AWS CLI Setup On This Machine
 
