@@ -2,16 +2,25 @@ import os
 import pandas as pd
 import boto3
 
+
+def _resolve_runtime_environment() -> str:
+    """Resolve whether file IO should use local disk or AWS resources."""
+
+    explicit_env = os.environ.get('GARMIN_RUNTIME_ENV')
+    if explicit_env in {'local', 'aws'}:
+        return explicit_env
+    return 'aws' if (
+        os.environ.get('AWS_EXECUTION_ENV') is not None
+        and os.environ.get('LAMBDA_TASK_ROOT') is not None
+    ) else 'local'
+
 class FileManager:
     """
     General file manager for reading/writing data files locally or to S3, depending on environment.
     """
     def __init__(self, environment=None, local_dir=None, s3_bucket=None, s3_prefix=None):
         if environment is None:
-            if 'AWS_EXECUTION_ENV' in os.environ:
-                environment = 'aws'
-            else:
-                environment = 'local'
+            environment = _resolve_runtime_environment()
         self.environment = environment
         self.local_dir = local_dir or os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data'))
         self.s3_bucket = s3_bucket or os.environ.get('GARMIN_S3_BUCKET')

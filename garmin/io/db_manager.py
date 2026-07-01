@@ -7,23 +7,33 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
 from garmin.io.models import Base
 
+
+def _resolve_runtime_environment() -> str:
+    """Resolve whether IO helpers should behave as local or AWS-backed."""
+
+    explicit_env = os.environ.get('GARMIN_RUNTIME_ENV')
+    if explicit_env in {'local', 'aws'}:
+        return explicit_env
+    return 'aws' if (
+        os.environ.get('AWS_EXECUTION_ENV') is not None
+        and os.environ.get('LAMBDA_TASK_ROOT') is not None
+    ) else 'local'
+
 # --- Generalized Database Manager ---
 class DatabaseManager:
     def __init__(self, db_uri=None, environment=None):
         """
         Initialize the database manager.
-        
+
         Args:
             db_uri (str, optional): A full SQLAlchemy connection string.
                 If not provided, it will be chosen based on the environment.
             environment (str, optional): 'aws' or 'local'. If not provided,
-                the code will try to detect AWS Lambda via AWS_EXECUTION_ENV.
+                the code will prefer GARMIN_RUNTIME_ENV when set and otherwise
+                detect real AWS Lambda runtime markers.
         """
         if environment is None:
-            if 'AWS_EXECUTION_ENV' in os.environ:
-                environment = 'aws'
-            else:
-                environment = 'local'
+            environment = _resolve_runtime_environment()
         if db_uri is None:
             if environment == 'aws':
                 db_uri = os.environ.get('DATABASE_URL')
