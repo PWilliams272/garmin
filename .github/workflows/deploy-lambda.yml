@@ -17,6 +17,13 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION || 'us-east-2' }}
+
       - name: Create deployment package directory
         run: |
           mkdir lambda_build
@@ -32,11 +39,19 @@ jobs:
           cd lambda_build
           zip -r ../lambda_deploy.zip .
 
-      - name: Deploy to Lambda
-        uses: appleboy/lambda-action@v0.1.9
-        with:
-          aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws_region: ${{ secrets.AWS_REGION || 'us-east-2' }}
-          function_name: garmin-data-updater
-          zip_file: lambda_deploy.zip
+      - name: Update Lambda code
+        run: |
+          aws lambda update-function-code \
+            --function-name garmin-data-updater \
+            --zip-file fileb://lambda_deploy.zip
+
+      - name: Wait for code update
+        run: |
+          aws lambda wait function-updated \
+            --function-name garmin-data-updater
+
+      - name: Update Lambda environment
+        run: |
+          aws lambda update-function-configuration \
+            --function-name garmin-data-updater \
+            --environment 'Variables={GARMIN_USE_AWS_SECRETS=1,GARMIN_AWS_SECRET_NAME=garmin/oauth2_token,GARMIN_S3_BUCKET=my-garmin-data,AWS_REGION=us-east-2}'
