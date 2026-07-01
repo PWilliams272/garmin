@@ -1,0 +1,86 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Garmin Lambda and schedule managed as a SAM application.
+
+Parameters:
+  FunctionName:
+    Type: String
+    Default: garmin-data-updater-managed
+    Description: Lambda function name for the stack-managed Garmin updater.
+  GarminS3Bucket:
+    Type: String
+    Default: my-garmin-data
+    Description: Private S3 bucket for curated Garmin outputs and artifacts.
+  GarminSecretName:
+    Type: String
+    Default: garmin/oauth2_token
+    Description: Secrets Manager secret containing the repo-owned Garmin OAuth2 token.
+  ScheduleExpression:
+    Type: String
+    Default: rate(1 day)
+    Description: EventBridge schedule expression for the updater.
+  ScheduleEnabled:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Whether the EventBridge schedule is enabled.
+
+Conditions:
+  EnableSchedule: !Equals [!Ref ScheduleEnabled, 'true']
+
+Resources:
+  GarminDataUpdaterFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Ref FunctionName
+      CodeUri: ../../
+      Handler: garmin.scripts.lambda_update.lambda_handler
+      Runtime: python3.11
+      Timeout: 900
+      MemorySize: 128
+      Description: Pull Garmin data and write curated outputs to S3.
+      Environment:
+        Variables:
+          GARMIN_USE_AWS_SECRETS: '1'
+          GARMIN_AWS_SECRET_NAME: !Ref GarminSecretName
+          GARMIN_S3_BUCKET: !Ref GarminS3Bucket
+          AWS_REGION: !Ref AWS::Region
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Statement:
+            - Sid: ListAndWriteGarminBucket
+              Effect: Allow
+              Action:
+                - s3:ListBucket
+              Resource: !Sub arn:aws:s3:::${GarminS3Bucket}
+            - Sid: ReadWriteGarminObjects
+              Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+              Resource: !Sub arn:aws:s3:::${GarminS3Bucket}/*
+            - Sid: ReadGarminAuthSecret
+              Effect: Allow
+              Action:
+                - secretsmanager:DescribeSecret
+                - secretsmanager:GetSecretValue
+              Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${GarminSecretName}*
+      Events:
+        DailySchedule:
+          Type: Schedule
+          Properties:
+            Name: !Sub ${FunctionName}-schedule
+            Schedule: !Ref ScheduleExpression
+            Enabled: !If [EnableSchedule, true, false]
+
+Outputs:
+  GarminDataUpdaterFunctionArn:
+    Description: ARN of the stack-managed Garmin updater Lambda.
+    Value: !GetAtt GarminDataUpdaterFunction.Arn
+  GarminDataUpdaterFunctionName:
+    Description: Name of the stack-managed Garmin updater Lambda.
+    Value: !Ref GarminDataUpdaterFunction

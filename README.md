@@ -127,6 +127,25 @@ source .venv/bin/activate && python -m garmin.scripts.bootstrap_aws_auth
 4. Set `GARMIN_S3_BUCKET` in Lambda so curated parquet and downstream artifacts write to the Garmin bucket.
 5. Keep full-login credentials out of Lambda unless you intentionally want a fallback recovery path.
 
+## Bundle-style Lambda deployment
+
+This repo now includes a SAM starter under `infra/sam/` so Lambda code, runtime env, IAM, and scheduling can be managed as a versioned deployment bundle rather than only through ad hoc CLI updates.
+
+Local SAM build and deploy flow:
+
+```bash
+sam build -t infra/sam/template.yaml
+sam deploy --guided --config-file infra/sam/samconfig.example.toml
+```
+
+Important migration note:
+
+- The existing `garmin-data-updater` Lambda is currently an unmanaged function outside CloudFormation.
+- The SAM template defaults to `garmin-data-updater-managed` to avoid colliding with that existing function during adoption.
+- Once the managed function is validated, you can switch schedules or rename resources as part of the cutover.
+
+The existing GitHub Actions workflow still supports direct code-and-config updates to the current `garmin-data-updater` function on `prod`.
+
 ## Current recommendation
 
 Use full login for local bootstrap and manual recovery only. Use the repo-owned OAuth2 refresh token from Secrets Manager for Lambda and other unattended jobs.
