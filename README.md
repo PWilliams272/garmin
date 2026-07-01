@@ -85,6 +85,15 @@ source .venv/bin/activate && python -m garmin.scripts.manual_update
 
 The default updater entrypoint now writes curated parquet through the file-manager path. Locally that means `data/curated/...`; in Lambda that means S3 under the configured `GARMIN_S3_BUCKET`.
 
+To test the AWS-backed file path locally before deploying Lambda:
+
+```bash
+source .venv/bin/activate && python -m garmin.scripts.manual_update --storage-target s3
+source .venv/bin/activate && python -m garmin.scripts.manual_process_data --storage-target s3
+```
+
+Those commands keep the local Garmin auth flow, but they write curated, processed, and moving-average outputs through the S3-backed file manager instead of the repo-local `data/` directory.
+
 Process curated daily parquet into processed outputs and moving averages:
 
 ```bash

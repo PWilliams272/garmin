@@ -1,6 +1,8 @@
 from dotenv import load_dotenv
 load_dotenv()
 
+import argparse
+
 from garmin.data_processor.processor import GarminDataProcessor
 from garmin.io.curated_store import CuratedDataStore
 from garmin.io.file_manager import FileManager
@@ -27,9 +29,22 @@ def load_curated_daily_inputs(curated_store: CuratedDataStore) -> dict[str, obje
         )
     return raw_data_dict
 
-def main():
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Process curated Garmin parquet outputs.")
+    parser.add_argument(
+        "--storage-target",
+        choices=["local", "s3"],
+        default="local",
+        help="Where curated inputs are read from and processed outputs are written.",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None):
+    args = build_parser().parse_args(argv)
     proc = GarminDataProcessor()
-    fm = FileManager()
+    fm = FileManager(environment="aws" if args.storage_target == "s3" else "local")
     curated_store = CuratedDataStore(file_manager=fm)
 
     raw_data_dict = load_curated_daily_inputs(curated_store)

@@ -8,6 +8,7 @@ import pytest
 from garmin.data_processor.processor import GarminDataProcessor
 from garmin.io.curated_store import CuratedDataStore
 from garmin.io.file_manager import FileManager
+import garmin.scripts.manual_process_data as manual_process_data_module
 from garmin.scripts.manual_process_data import DAILY_DATASETS, load_curated_daily_inputs
 
 
@@ -119,3 +120,40 @@ def test_processor_accepts_curated_inputs_without_sql_id_columns(tmp_path) -> No
         'body_battery',
     }
     assert 'id' not in processed['health_stats'].columns
+
+
+def test_manual_process_data_can_target_s3(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class StubFileManager:
+        def __init__(self, environment=None, **kwargs):
+            captured['environment'] = environment
+
+        def write_df(self, df, filename, format='parquet'):
+            captured.setdefault('writes', []).append((filename, format))
+
+    class StubCuratedStore:
+        def __init__(self, file_manager):
+            self.file_manager = file_manager
+
+    class StubProcessor:
+        def process_all(self, raw_data_dict):
+            return {'steps': pd.DataFrame([{'date': pd.Timestamp('2024-01-01'), 'total_steps': 1}])}
+
+        def calculate_moving_averages_all(self, processed_data, kernels, bandwidths):
+            return {'steps': pd.DataFrame([{'date': pd.Timestamp('2024-01-01'), 'total_steps_gaussian_1': 1}])}
+
+    monkeypatch.setattr(manual_process_data_module, 'FileManager', StubFileManager)
+    monkeypatch.setattr(manual_process_data_module, 'CuratedDataStore', StubCuratedStore)
+    monkeypatch.setattr(manual_process_data_module, 'GarminDataProcessor', StubProcessor)
+    monkeypatch.setattr(
+        manual_process_data_module,
+        'load_curated_daily_inputs',
+        lambda curated_store: {dataset: pd.DataFrame([{'date': '2024-01-01'}]) for dataset in DAILY_DATASETS},
+    )
+
+    manual_process_data_module.main(['--storage-target', 's3'])
+
+    assert captured['environment'] == 'aws'
+    assert ('processed/steps.parquet', 'parquet') in captured['writes']
+    assert ('moving_averages/steps.parquet', 'parquet') in captured['writes']
