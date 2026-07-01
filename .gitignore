@@ -5,6 +5,9 @@ data/
 .venv/
 __pycache__/
 garmin_project.egg-info/
+garmin.egg-info/
 notebooks/
 *.db
 .DS_Store
+figures/
+steps.png
