@@ -73,6 +73,12 @@ Run the updater locally against SQLite:
 source .venv/bin/activate && python -m garmin.scripts.manual_update
 ```
 
+Detailed backfill behavior:
+
+- Detailed Garmin endpoints may only allow a limited amount of historical backfill per run.
+- The updater now keeps pulling while Garmin continues serving data, then stops after the first cache-warm denial.
+- Remaining detailed dates are left for the next run instead of continuing to hammer denied requests.
+
 Validate imports/bytecode:
 
 ```bash

@@ -150,7 +150,11 @@ class HealthDetailedPuller:
                         start_date: str = None,
                         end_date: str = None,
                         dates: list[str] = None) -> pd.DataFrame:
-        """Loop over single‐day pulls, batch cache warms, then retry once."""
+        """Loop over single-day pulls, batch cache warms, then retry once.
+
+        Once Garmin starts denying cache-warm requests, stop immediately and
+        defer the remaining dates to a later run.
+        """
         if dates is not None:
             date_list = sorted(set(dates))  # Ensure no duplicates and sorted
         elif start_date and end_date:
@@ -167,10 +171,13 @@ class HealthDetailedPuller:
         to_retry = []
         denied = []
         df_list = []
+        deferred_dates = []
+        skipped_retry_dates = 0
+        stop_after_denied = False
 
         # First pass: try to pull all the data, keeping track of cache warms
         # and denied requests
-        for date in tqdm(date_list, desc="Pulling data"):
+        for idx, date in enumerate(tqdm(date_list, desc="Pulling data")):
             try:
                 df_day = pull_one_day(date)
                 if not df_day.empty:
@@ -182,14 +189,18 @@ class HealthDetailedPuller:
                 to_retry.append(date)
             except CacheWarmDenied:
                 denied.append(date)
+                deferred_dates = date_list[idx + 1 :]
+                skipped_retry_dates = len(to_retry)
+                stop_after_denied = True
+                break
             except NoDataAvailable:
                 no_data.append(date)
                 continue
         
         # Try to get the data after the cache warm requests
-        if to_retry:
+        if to_retry and not stop_after_denied:
             time.sleep(1)
-            for date in tqdm(to_retry, desc="Retrying cache warm requests"):
+            for idx, date in enumerate(tqdm(to_retry, desc="Retrying cache warm requests")):
                 try:
                     df_day = pull_one_day(date)
                     if not df_day.empty:
@@ -199,11 +210,22 @@ class HealthDetailedPuller:
                         no_data.append(date)
                 except CacheWarmDenied:
                     denied.append(date)
+                    deferred_dates = to_retry[idx + 1 :]
+                    skipped_retry_dates = len(to_retry) - idx - 1
+                    stop_after_denied = True
+                    break
                 except NoDataAvailable:
                     no_data.append(date)
 
         if denied:
             print(f"Cache warm denied for {len(denied)} dates: {', '.join(denied)}")
+        if stop_after_denied:
+            deferred_count = len(deferred_dates) + skipped_retry_dates
+            if deferred_count:
+                print(
+                    "Stopping detailed pull after Garmin denied cache warming; "
+                    f"deferring {deferred_count} remaining dates to the next run."
+                )
         if no_data:
             print(f"No data available for {len(no_data)} dates: {', '.join(no_data)}")
         
