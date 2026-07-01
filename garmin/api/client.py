@@ -70,6 +70,16 @@ class GarminConnectClient:
             timeout=self.timeout,
             **kwargs,
         )
+        if response.status_code == 401 and self.refresh_callback is not None:
+            self.oauth2_token = self.refresh_callback()
+            headers["Authorization"] = self.oauth2_token.authorization_header
+            response = self.session.request(
+                method,
+                url,
+                headers=headers,
+                timeout=self.timeout,
+                **kwargs,
+            )
         try:
             response.raise_for_status()
         except HTTPError as exc:

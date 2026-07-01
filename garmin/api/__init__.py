@@ -8,7 +8,10 @@ depend only on ``GarminSession``.
 from .exceptions import (
     GarminAPIError,
     GarminAuthenticationError,
+    GarminConnectionError,
     GarminLoginFlowNotImplementedError,
+    GarminMFARequiredError,
+    GarminRateLimitError,
     GarminRequestError,
     GarminTokenStoreError,
 )
@@ -17,7 +20,10 @@ from .session import GarminSession
 __all__ = [
     "GarminAPIError",
     "GarminAuthenticationError",
+    "GarminConnectionError",
     "GarminLoginFlowNotImplementedError",
+    "GarminMFARequiredError",
+    "GarminRateLimitError",
     "GarminRequestError",
     "GarminSession",
     "GarminTokenStoreError",

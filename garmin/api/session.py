@@ -5,14 +5,19 @@ from __future__ import annotations
 import os
 from getpass import getpass
 
+from dotenv import load_dotenv
+
+from .auth import GarminAuthenticator
 from .client import GarminConnectClient
 from .exceptions import (
     GarminAuthenticationError,
-    GarminLoginFlowNotImplementedError,
     GarminRequestError,
 )
 from .storage import TokenStore, TokenStoreConfig
 from .tokens import GarminAuthState, OAuth2Token
+
+
+load_dotenv()
 
 
 class GarminSession:
@@ -53,15 +58,20 @@ class GarminSession:
                 region=os.environ.get("AWS_REGION", "us-east-2"),
             )
         )
+        self._authenticator = GarminAuthenticator(domain=domain)
         self._client = GarminConnectClient(
             domain=domain,
             refresh_callback=self.refresh_token,
         )
 
     def _is_aws(self) -> bool:
-        return os.environ.get("AWS_EXECUTION_ENV") is not None or os.environ.get(
-            "GARMIN_USE_AWS_SECRETS"
-        ) == "1"
+        aws_override = os.environ.get("GARMIN_USE_AWS_SECRETS")
+        if aws_override is not None:
+            return aws_override == "1"
+        return (
+            os.environ.get("AWS_EXECUTION_ENV") is not None
+            and os.environ.get("LAMBDA_TASK_ROOT") is not None
+        )
 
     def _get_secret_name(self) -> str:
         return os.environ.get("GARMIN_AWS_SECRET_NAME", "garmin/oauth2_token")
@@ -87,11 +97,11 @@ class GarminSession:
 
     def _login(self) -> None:
         self._prompt_for_credentials()
-        raise GarminLoginFlowNotImplementedError(
-            "Interactive Garmin login is not implemented in garmin.api yet. "
-            "Load a valid oauth2 token from GARMIN_OAUTH2_JSON, GARMIN_ACCESS_TOKEN, "
-            f"or {os.path.join(self.session_dir, 'oauth2_token.json')} while the new login flow is built."
-        )
+        if not self.username or not self.password:
+            raise GarminAuthenticationError("GARMIN_USERNAME and GARMIN_PASSWORD are required.")
+        auth_state = self._authenticator.login(self.username, self.password)
+        self._apply_auth_state(auth_state)
+        self._save_token()
 
     def _validate_session(self) -> None:
         profile = self._client.get("/userprofile-service/socialProfile")
@@ -102,20 +112,21 @@ class GarminSession:
         try:
             self._apply_auth_state(self._load_token())
             self._validate_session()
+            if not self._is_aws() and not self._token_store.has_primary_local_tokens():
+                self._save_token()
         except (FileNotFoundError, GarminAuthenticationError, GarminRequestError, ValueError):
             self._login()
         self._connected = True
         return self
 
     def refresh_token(self) -> OAuth2Token:
-        if self._auth_state is None or self._auth_state.oauth1_token is None:
-            raise GarminLoginFlowNotImplementedError(
-                "OAuth token refresh is not implemented yet in the repo-owned Garmin client. "
-                "The next step is to replace Garmin's login and token exchange flow in garmin.api."
-            )
-        raise GarminLoginFlowNotImplementedError(
-            "Stored oauth1 state is present, but the repo does not yet implement Garmin's current token refresh flow."
-        )
+        if self._auth_state is None:
+            raise GarminAuthenticationError("No Garmin auth state is loaded.")
+        refreshed = self._authenticator.refresh(self._auth_state.oauth2_token)
+        self._auth_state.oauth2_token = refreshed
+        self._client.set_oauth2_token(refreshed)
+        self._save_token()
+        return refreshed
 
     def get(self, url: str):
         if not self._connected:

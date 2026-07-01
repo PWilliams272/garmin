@@ -46,6 +46,11 @@ class TokenStore:
             return
         self._save_to_local(auth_state)
 
+    def has_primary_local_tokens(self) -> bool:
+        """Return True when the repo-owned local oauth2 token file exists."""
+
+        return (Path(self.config.session_dir) / "oauth2_token.json").exists()
+
     def _load_from_env(self) -> GarminAuthState | None:
         oauth2_json = os.environ.get("GARMIN_OAUTH2_JSON")
         if oauth2_json:
@@ -68,6 +73,8 @@ class TokenStore:
             raw_token["refresh_token_expires_at"] = int(
                 os.environ["GARMIN_REFRESH_EXPIRES_AT"]
             )
+        if os.environ.get("GARMIN_DI_CLIENT_ID"):
+            raw_token["client_id"] = os.environ["GARMIN_DI_CLIENT_ID"]
         return GarminAuthState(oauth2_token=OAuth2Token.from_dict(raw_token))
 
     def _candidate_dirs(self) -> list[Path]:

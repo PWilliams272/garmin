@@ -17,6 +17,18 @@ class GarminTokenStoreError(GarminAuthenticationError):
     """Raised when token persistence fails."""
 
 
+class GarminConnectionError(GarminAPIError):
+    """Raised when Garmin authentication or transport plumbing fails."""
+
+
+class GarminRateLimitError(GarminConnectionError):
+    """Raised when Garmin blocks or rate-limits authentication requests."""
+
+
+class GarminMFARequiredError(GarminAuthenticationError):
+    """Raised when Garmin requires MFA and the current flow cannot complete it."""
+
+
 class GarminRequestError(GarminAPIError):
     """Raised when an authenticated Garmin Connect request fails."""
 
