@@ -94,7 +94,12 @@ source .venv/bin/activate && python -m compileall src/garmin
 ## Bootstrapping Lambda tokens
 
 1. Run a local login once so the repo-owned token file is created under `data/sessions/garmin_connect/`.
-2. Copy the contents of `oauth2_token.json` into the AWS secret named by `GARMIN_AWS_SECRET_NAME`.
+2. Publish the local token to Secrets Manager:
+
+```bash
+source .venv/bin/activate && python -m garmin.scripts.bootstrap_aws_auth
+```
+
 3. Set `GARMIN_USE_AWS_SECRETS=1` in Lambda.
 4. Keep full-login credentials out of Lambda unless you intentionally want a fallback recovery path.
 
