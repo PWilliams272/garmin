@@ -156,7 +156,7 @@ class HealthDetailedPuller:
         defer the remaining dates to a later run.
         """
         if dates is not None:
-            date_list = sorted(set(dates))  # Ensure no duplicates and sorted
+            date_list = list(dict.fromkeys(dates))
         elif start_date and end_date:
             start = datetime.strptime(start_date, "%Y-%m-%d").date()
             end = datetime.strptime(end_date, "%Y-%m-%d").date()

@@ -275,17 +275,39 @@ class DataUpdater:
         today = datetime.today().date()
 
         existing_status_df = self.curated_store.load_detailed_status(dataset_name)
-        existing_status: dict[datetime.date, str] = {}
+        existing_status: dict = {}
         if not existing_status_df.empty and {"query_date", "pull_status"}.issubset(existing_status_df.columns):
+            normalized_status_df = existing_status_df.copy()
+            normalized_status_df["query_date"] = pd.to_datetime(normalized_status_df["query_date"]).dt.date
+            if "date_pulled" in normalized_status_df.columns:
+                normalized_status_df["date_pulled"] = pd.to_datetime(
+                    normalized_status_df["date_pulled"],
+                    errors="coerce",
+                ).dt.date
+            else:
+                normalized_status_df["date_pulled"] = pd.NaT
+
             existing_status = {
-                pd.to_datetime(row.query_date).date(): row.pull_status
-                for row in existing_status_df.itertuples(index=False)
+                row.query_date: (row.pull_status, row.date_pulled)
+                for row in normalized_status_df.itertuples(index=False)
             }
 
-        date_list = pd.date_range(start=start_date, end=today).date
+        date_list = list(reversed(pd.date_range(start=start_date, end=today).date))
+
+        def should_pull(query_date) -> bool:
+            status_info = existing_status.get(query_date)
+            if status_info is None:
+                return True
+
+            pull_status, date_pulled = status_info
+            if date_pulled == query_date:
+                return True
+
+            return pull_status not in {"fetched", "no_data"}
+
         to_pull = [
             d.strftime('%Y-%m-%d') for d in date_list
-            if existing_status.get(d) not in {"fetched", "no_data"}
+            if should_pull(d)
         ]
         if not to_pull:
             print(f"No dates to pull for {dataset_name}.")

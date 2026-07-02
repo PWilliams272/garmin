@@ -35,3 +35,21 @@ def test_pull_for_range_stops_after_first_denial() -> None:
         "no_data": [],
         "denied": ["2024-01-03"],
     }
+
+
+def test_pull_for_range_preserves_explicit_date_order() -> None:
+    puller = HealthDetailedPuller(session=object())
+    calls: list[str] = []
+
+    def pull_one_day(date: str) -> pd.DataFrame:
+        calls.append(date)
+        return pd.DataFrame(
+            [{"query_date": date, "date_time_utc": "2024-01-01T00:00:00Z", "hr": 50}]
+        )
+
+    puller._pull_for_range(
+        pull_one_day,
+        dates=["2024-01-03", "2024-01-02", "2024-01-03", "2024-01-01"],
+    )
+
+    assert calls == ["2024-01-03", "2024-01-02", "2024-01-01"]

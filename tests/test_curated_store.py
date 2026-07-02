@@ -159,7 +159,7 @@ def test_data_updater_can_resume_detailed_data_from_curated_status(tmp_path, mon
 
     updater.update(HeartRateDetailed, start_date="2024-01-01")
 
-    assert calls == [["2024-01-03", "2024-01-04"]]
+    assert calls == [["2024-01-04", "2024-01-03"]]
 
     status_df = store.load_detailed_status("heart_rate_detailed")
     status_df["query_date"] = pd.to_datetime(status_df["query_date"]).dt.date
@@ -174,3 +174,80 @@ def test_data_updater_can_resume_detailed_data_from_curated_status(tmp_path, mon
 
     detailed_path = tmp_path / store.detailed_dataset_path("heart_rate_detailed", "2024-01-03")
     assert detailed_path.exists()
+
+
+def test_detailed_data_updater_prioritizes_newest_unresolved_dates_and_repulls_same_day(tmp_path, monkeypatch) -> None:
+    store = CuratedDataStore(
+        file_manager=FileManager(environment="local", local_dir=str(tmp_path))
+    )
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def today(cls) -> datetime:
+            return cls(2024, 1, 5)
+
+    monkeypatch.setattr(updaters_module, "datetime", FixedDateTime)
+
+    store.merge_detailed_status(
+        "heart_rate_detailed",
+        pd.DataFrame(
+            [
+                {"query_date": date(2024, 1, 1), "date_pulled": date(2024, 1, 10), "pull_status": "fetched"},
+                {"query_date": date(2024, 1, 2), "date_pulled": date(2024, 1, 2), "pull_status": "fetched"},
+                {"query_date": date(2024, 1, 3), "date_pulled": date(2024, 1, 10), "pull_status": "no_data"},
+                {"query_date": date(2024, 1, 4), "date_pulled": date(2024, 1, 10), "pull_status": "denied"},
+            ]
+        ),
+    )
+
+    calls: list[list[str]] = []
+
+    class StubHealthDetailedPuller:
+        def __init__(self) -> None:
+            self._last_pull_status: dict[str, list[str]] = {}
+
+        def pull_data(self, data_type: str, dates: list[str]) -> pd.DataFrame:
+            assert data_type == "heart_rate"
+            calls.append(dates)
+            self._last_pull_status = {
+                "fetched": ["2024-01-04", "2024-01-02"],
+                "no_data": ["2024-01-05"],
+                "denied": [],
+            }
+            return pd.DataFrame(
+                [
+                    {
+                        "query_date": "2024-01-04",
+                        "date_time_utc": "2024-01-04T00:00:00Z",
+                        "timestamp": 1704326400000,
+                        "hr": 55,
+                    },
+                    {
+                        "query_date": "2024-01-02",
+                        "date_time_utc": "2024-01-02T00:00:00Z",
+                        "timestamp": 1704153600000,
+                        "hr": 54,
+                    },
+                ]
+            )
+
+    updater = DataUpdater(
+        session=object(),
+        db_manager=object(),
+        curated_store=store,
+        health_puller=object(),
+        health_detailed_puller=StubHealthDetailedPuller(),
+    )
+
+    updater.update(HeartRateDetailed, start_date="2024-01-01")
+
+    assert calls == [["2024-01-05", "2024-01-04", "2024-01-02"]]
+
+    status_df = store.load_detailed_status("heart_rate_detailed")
+    status_df["query_date"] = pd.to_datetime(status_df["query_date"]).dt.date
+    status_map = dict(zip(status_df["query_date"], status_df["pull_status"]))
+    assert status_map[date(2024, 1, 1)] == "fetched"
+    assert status_map[date(2024, 1, 2)] == "fetched"
+    assert status_map[date(2024, 1, 3)] == "no_data"
+    assert status_map[date(2024, 1, 4)] == "fetched"
+    assert status_map[date(2024, 1, 5)] == "no_data"
