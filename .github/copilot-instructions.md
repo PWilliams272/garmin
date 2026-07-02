@@ -23,14 +23,20 @@
 - Verified primary AWS account ID: `545009868532`
 - Verified default region for current work: `us-east-2`
 - Do not create new credentials in this repo. Use the existing local AWS CLI profiles from `~/.aws/config` and `~/.aws/credentials`.
-- For Garmin repo S3 work, prefer `--profile personal --region us-east-2`.
-- The `garmin` profile can list Garmin-related Lambda resources, but earlier discovery showed it did not have the same S3 bucket visibility as `personal`.
-- If a command fails under `garmin`, retry with `personal` before assuming the resource is missing.
+- Prefer `--profile admin --region us-east-2` for cross-project AWS management, IAM changes, Lambda configuration changes, NAT or VPC work, and bucket-policy inspection.
+- Use `--profile personal --region us-east-2` only as a fallback read profile when needed.
+- The `garmin` profile can still be used for narrow Garmin Lambda inspection, but it is not the preferred operator profile.
 
 Verified useful profiles on this machine:
 
+- `admin`
 - `personal`
 - `garmin`
+
+Verified admin CLI identity:
+
+- `arn:aws:iam::545009868532:user/pw-admin-cli`
+- This `admin` profile was added so cross-project AWS work can be done cleanly from the CLI without borrowing a project-scoped IAM user.
 
 Verified Garmin-relevant AWS resources:
 
@@ -39,18 +45,18 @@ Verified Garmin-relevant AWS resources:
 
 Safe AWS CLI verification commands:
 
-- `aws sts get-caller-identity --profile personal --region us-east-2`
-- `aws s3 ls --profile personal --region us-east-2`
-- `aws s3 ls s3://my-garmin-data --profile personal --region us-east-2`
-- `aws s3 ls s3://my-garmin-config --profile personal --region us-east-2`
-- `aws lambda list-functions --profile garmin --region us-east-2 --query 'Functions[?FunctionName==\`garmin-data-updater\`].FunctionName' --output table`
+- `aws sts get-caller-identity --profile admin --region us-east-2`
+- `aws s3 ls --profile admin --region us-east-2`
+- `aws s3 ls s3://my-garmin-data --profile admin --region us-east-2`
+- `aws s3 ls s3://my-garmin-config --profile admin --region us-east-2`
+- `aws lambda get-function-configuration --function-name garmin-data-updater --profile admin --region us-east-2`
 
 Useful Garmin bucket commands:
 
-- list top-level prefixes: `aws s3 ls s3://my-garmin-data --profile personal --region us-east-2`
-- copy down a local sample: `aws s3 cp s3://my-garmin-data/<key> ./tmp/<filename> --profile personal --region us-east-2`
-- upload a file: `aws s3 cp ./local-file s3://my-garmin-data/<key> --profile personal --region us-east-2`
-- sync a local folder: `aws s3 sync ./local-dir s3://my-garmin-data/<prefix>/ --profile personal --region us-east-2`
+- list top-level prefixes: `aws s3 ls s3://my-garmin-data --profile admin --region us-east-2`
+- copy down a local sample: `aws s3 cp s3://my-garmin-data/<key> ./tmp/<filename> --profile admin --region us-east-2`
+- upload a file: `aws s3 cp ./local-file s3://my-garmin-data/<key> --profile admin --region us-east-2`
+- sync a local folder: `aws s3 sync ./local-dir s3://my-garmin-data/<prefix>/ --profile admin --region us-east-2`
 
 Access rules:
 
@@ -92,8 +98,9 @@ Access rules:
 - Verified: `pyproject.toml` is aligned with the real `src/` layout and `setup.py` is now a compatibility shim.
 - Verified: `README.md` and the focused `tests/` directory now cover the repo-owned auth flow, curated storage migration path, and targeted updater behavior.
 - Verified: live RDS inspection showed the populated Garmin-like historical tables are currently in the `public` schema, while the `garmin` schema is effectively empty.
-- Verified: `my-garmin-data` currently contains legacy `processed/`, `moving_averages/`, and `dashboards/` prefixes, and the new `curated/` prefix has not been populated yet.
-- Planned: move Garmin analytical history off the shared RDS and toward private S3-backed analytical files.
+- Verified: `my-garmin-data` now contains active `curated/` outputs from the deployed updater path alongside legacy `processed/`, `moving_averages/`, and `dashboards/` prefixes.
+- Verified: the live Garmin Lambda no longer carries `DATABASE_URL`, now relies on role-based S3 access, is no longer VPC-attached, and no longer depends on the former NAT path for its deployed updater flow.
+- Planned: continue shrinking or retiring legacy DB-backed Garmin paths and legacy S3 prefixes as the curated path becomes canonical.
 - Planned: reduce the website's dependence on the embedded/submodule copy in `aws_flask_site`.
 
 ## Safety Rules
@@ -118,7 +125,7 @@ Access rules:
 - Treat private S3-backed analytical files as the target storage layer for Garmin data, not the shared website RDS.
 - Keep raw or processed personal Garmin data private and expose only curated summaries or viewer-ready outputs to the website.
 - Treat the populated Garmin-like tables currently in the live database `public` schema as legacy migration input, not as the desired long-term source of truth.
-- If the Garmin Lambda only needs public API access, S3, and Secrets Manager, prefer a non-VPC Lambda so NAT is no longer required for this workload.
+- The deployed Garmin Lambda now follows that non-VPC model: public API access plus S3 plus Secrets Manager, without VPC or NAT dependence.
 - If a relational store is still needed later, reserve it for small metadata or workflow state, not the main time-series history.
 
 ## Documentation Standards
