@@ -13,3 +13,6 @@ notebooks/
 .DS_Store
 figures/
 steps.png
+lambda_build/
+lambda_deploy.zip
+tmp-lambda-response.json
