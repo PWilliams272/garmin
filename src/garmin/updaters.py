@@ -1,6 +1,7 @@
 ## garmin/updaters.py
 
 import pandas as pd
+import time
 from datetime import datetime, timedelta
 from tqdm import tqdm
 from typing import Callable
@@ -313,11 +314,23 @@ class DataUpdater:
             print(f"No dates to pull for {dataset_name}.")
             return
 
+        print(
+            f"Starting curated detailed update for {dataset_name}: "
+            f"{len(to_pull)} dates queued."
+        )
+        pull_started_at = time.perf_counter()
         df = pull_fn(dates=to_pull)
+        pull_elapsed = time.perf_counter() - pull_started_at
         status_map = getattr(self.health_detailed_puller, "_last_pull_status", {})
         fetched_dates = status_map.get("fetched", [])
         no_data_dates = status_map.get("no_data", [])
         denied_dates = status_map.get("denied", [])
+
+        print(
+            f"Detailed pull for {dataset_name} finished in {pull_elapsed:.2f}s: "
+            f"{len(fetched_dates)} fetched, {len(no_data_dates)} no_data, "
+            f"{len(denied_dates)} denied."
+        )
 
         if not df.empty:
             detailed_df = df.copy()
@@ -330,12 +343,21 @@ class DataUpdater:
             )
             detailed_df = convert_nulls(detailed_df)
 
+            write_started_at = time.perf_counter()
+            write_groups = 0
             for query_date, day_df in detailed_df.groupby("query_date", sort=True):
                 self.curated_store.write_detailed_day(
                     dataset_name,
                     query_date.isoformat(),
                     day_df.reset_index(drop=True),
                 )
+                write_groups += 1
+
+            write_elapsed = time.perf_counter() - write_started_at
+            print(
+                f"Wrote {write_groups} detailed day files for {dataset_name} "
+                f"in {write_elapsed:.2f}s."
+            )
 
         status_rows = [
             {
@@ -363,7 +385,13 @@ class DataUpdater:
         )
 
         if status_rows:
+            status_started_at = time.perf_counter()
             self.curated_store.merge_detailed_status(dataset_name, pd.DataFrame(status_rows))
+            status_elapsed = time.perf_counter() - status_started_at
+            print(
+                f"Merged {len(status_rows)} detailed status rows for {dataset_name} "
+                f"in {status_elapsed:.2f}s."
+            )
 
         print(
             "Saved curated detailed data for "

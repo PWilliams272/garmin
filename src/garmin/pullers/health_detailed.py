@@ -286,4 +286,6 @@ class HealthDetailedPuller:
         """
         if data_type not in self._pull_configs:
             raise ValueError(f"Unsupported data type: {data_type}")
+        self._cache_warm_denied = False
+        self._last_pull_status = {}
         return self._generic_range_pull(data_type, start_date, end_date, dates)
