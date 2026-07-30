@@ -1,0 +1,192 @@
+/*
+  App shell — subset of kaya's app.css (kaya/src/kaya/viewer_static/app.css),
+  same class names/values, trimmed to what this dashboard uses.
+*/
+body {
+  min-height: 100vh;
+}
+
+.main-shell {
+  width: min(100%, var(--lg-content-max));
+  padding: 24px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: var(--lg-nav-h);
+  background: color-mix(in srgb, var(--lg-bg) 84%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--lg-border);
+  padding-bottom: 12px;
+}
+
+.topbar h1 {
+  font-size: var(--fs-2xl);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+.brand-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.brand-subtitle,
+.muted-copy {
+  font-size: var(--fs-sm);
+  color: var(--lg-text-2);
+}
+
+.card {
+  background: var(--lg-card);
+  border: 1px solid var(--lg-border);
+  border-radius: var(--lg-radius-lg);
+}
+
+.chart-card {
+  padding: 16px;
+}
+
+.section-heading {
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--lg-border);
+  color: var(--lg-text-3);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.kpi-card {
+  padding: 14px 16px;
+}
+
+.kpi-label {
+  color: var(--lg-text-2);
+  font-size: var(--fs-sm);
+}
+
+.kpi-value {
+  margin-top: 4px;
+  font-size: 28px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.control-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.inline-select-control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  color: var(--lg-text-2);
+}
+
+.inline-select-control select,
+.inline-select-control input {
+  background: var(--lg-surface);
+  color: var(--lg-text);
+  border: 1px solid var(--lg-border);
+  border-radius: var(--lg-radius-md);
+  padding: 10px 12px;
+}
+
+.inline-select-control input:focus,
+.inline-select-control select:focus {
+  outline: none;
+  border-color: var(--lg-gold);
+  box-shadow: 0 0 0 3px var(--lg-gold-soft);
+}
+
+.ghost-button {
+  padding: 8px 14px;
+  border: 1px solid var(--lg-border);
+  border-radius: 999px;
+  background: var(--lg-surface);
+  color: var(--lg-text);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.ghost-button:hover {
+  border-color: var(--lg-gold);
+  color: var(--lg-gold);
+}
+
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+.chart-host {
+  width: 100%;
+  min-height: 320px;
+}
+
+.status-line {
+  color: var(--lg-text-2);
+  font-size: var(--fs-sm);
+}
+
+.range-group {
+  display: inline-flex;
+  border: 1px solid var(--lg-border);
+  border-radius: var(--lg-radius-md);
+  overflow: hidden;
+  background: var(--lg-surface);
+}
+
+.range-group button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--lg-text-2);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  padding: 8px 14px;
+  border-right: 1px solid var(--lg-border);
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+
+.range-group button:last-child {
+  border-right: 0;
+}
+
+.range-group button:hover {
+  color: var(--lg-text);
+}
+
+.range-group button.active {
+  background: var(--lg-gold);
+  color: var(--lg-bg);
+}
+
+@media (max-width: 720px) {
+  .main-shell {
+    padding: 14px;
+    gap: 14px;
+  }
+}

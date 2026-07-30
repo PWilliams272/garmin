@@ -1,0 +1,151 @@
+/*
+  Design tokens — copied verbatim from kaya's viewer (kaya/src/kaya/viewer_static/tokens.css)
+  per WEB_APP_SETUP.md: "Copy kaya's theme directly ... don't re-derive the palette a third time."
+  Only the @font-face src paths were adjusted to this app's /static/fonts/ location.
+*/
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/static/fonts/ibm-plex-sans-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/static/fonts/ibm-plex-sans-700.woff2') format('woff2');
+}
+
+:root {
+  --lg-bg: #f6f8f9;
+  --lg-surface: #ffffff;
+  --lg-card: #ffffff;
+  --lg-border: #cdd6e0;
+  --lg-border-h: color-mix(in srgb, var(--lg-border), var(--lg-text) 18%);
+  --lg-active: rgba(0,0,0,0.03);
+
+  --lg-text: #171d27;
+  --lg-text-2: #57657a;
+  --lg-text-3: color-mix(in srgb, var(--lg-text-2), var(--lg-bg) 35%);
+
+  --lg-gold: #1976d2;
+  --lg-gold-soft: rgba(25, 118, 210, 0.10);
+  --lg-highlight: #b8752e;
+  --lg-success: #2e8b57;
+  --lg-warning: #a9821b;
+  --lg-danger: #b8382e;
+  --lg-info: #1565c0;
+
+  --lg-shadow-sm: 0 1px 2px rgba(15, 23, 32, 0.07);
+  --lg-shadow-md: 0 6px 16px rgba(15, 23, 32, 0.10);
+
+  --fs-2xs: 9px;
+  --fs-xs: 10px;
+  --fs-sm: 11px;
+  --fs-base: 13px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 20px;
+  --fs-2xl: 24px;
+
+  --lg-nav-h: 52px;
+  --lg-sidebar-w: 240px;
+  --lg-content-max: 1400px;
+  --lg-gap: 12px;
+  --lg-pad: 24px;
+
+  --lg-radius-xs: 3px;
+  --lg-radius-sm: 3px;
+  --lg-radius-md: 4px;
+  --lg-radius-lg: 5px;
+  --lg-radius-xl: 6px;
+
+  --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --dur-fast: 150ms;
+  --dur-normal: 250ms;
+
+  font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: var(--fs-base);
+  color: var(--lg-text);
+  background: var(--lg-bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --lg-bg: #0d1420;
+    --lg-surface: #161f2c;
+    --lg-card: #161f2c;
+    --lg-border: #293344;
+    --lg-active: rgba(255,255,255,0.06);
+
+    --lg-text: #e7ecf3;
+    --lg-text-2: #8fa0b5;
+
+    --lg-gold: #4da6ff;
+    --lg-gold-soft: rgba(77, 166, 255, 0.20);
+    --lg-highlight: #d99a52;
+    --lg-success: #6cc794;
+    --lg-warning: #d9b54a;
+    --lg-danger: #e0685f;
+    --lg-info: #7ac2ff;
+
+    --lg-shadow-sm: 0 0 0 1px rgba(255, 255, 255, 0.03);
+    --lg-shadow-md: 0 8px 20px rgba(0, 0, 0, 0.35);
+  }
+}
+
+:root[data-theme='dark'] {
+  --lg-bg: #0d1420;
+  --lg-surface: #161f2c;
+  --lg-card: #161f2c;
+  --lg-border: #293344;
+  --lg-active: rgba(255,255,255,0.06);
+
+  --lg-text: #e7ecf3;
+  --lg-text-2: #8fa0b5;
+
+  --lg-gold: #4da6ff;
+  --lg-gold-soft: rgba(77, 166, 255, 0.20);
+  --lg-highlight: #d99a52;
+  --lg-success: #6cc794;
+  --lg-warning: #d9b54a;
+  --lg-danger: #e0685f;
+  --lg-info: #7ac2ff;
+
+  --lg-shadow-sm: 0 0 0 1px rgba(255, 255, 255, 0.03);
+  --lg-shadow-md: 0 8px 20px rgba(0, 0, 0, 0.35);
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  min-height: 100%;
+}
+
+body {
+  background: var(--lg-bg);
+  color: var(--lg-text);
+  line-height: 1.5;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}

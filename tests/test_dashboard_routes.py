@@ -15,7 +15,7 @@ def test_quick_dashboard_page_renders() -> None:
         response = client.get('/quick_dashboard')
 
     assert response.status_code == 200
-    assert b'Quick Health Dashboard' in response.data
+    assert b'chart-host' in response.data
 
 
 def test_quick_dashboard_data_returns_combined_rows(monkeypatch) -> None:

@@ -6,8 +6,11 @@ from garmin.dashboard_curated import (
     cache_curated_dashboard_artifacts_locally,
     curated_dashboard_relative_dir,
 )
+from garmin.data_processor.processor import GarminDataProcessor
 import pandas as pd
 import os
+
+QUICK_DASHBOARD_MA_BANDWIDTH_DAYS = 14
 
 bp = Blueprint(
     'garmin',
@@ -64,7 +67,26 @@ def _load_dashboard_timeseries(source: str = 'local') -> pd.DataFrame:
         combined = combined.merge(frame, on='date', how='outer')
 
     combined = combined.sort_values('date').reset_index(drop=True)
+    combined = _add_gaussian_moving_averages(combined, ['resting_hr', 'total_steps', 'weight'])
     return combined
+
+
+def _add_gaussian_moving_averages(
+    df: pd.DataFrame,
+    columns: list[str],
+    bandwidth: int = QUICK_DASHBOARD_MA_BANDWIDTH_DAYS,
+) -> pd.DataFrame:
+    present_columns = [col for col in columns if col in df.columns]
+    if df.empty or not present_columns:
+        for col in columns:
+            df[f'{col}_ma'] = pd.Series(dtype='float64')
+        return df
+
+    processor = GarminDataProcessor()
+    ma_df = processor.calculate_moving_averages(df, present_columns, kernels=['gaussian'], bandwidths=[bandwidth])
+    for col in present_columns:
+        df[f'{col}_ma'] = ma_df[f'{col}_gaussian_{bandwidth}']
+    return df
 
 
 def _timeseries_records(df: pd.DataFrame) -> list[dict[str, object]]:
