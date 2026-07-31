@@ -16,7 +16,6 @@ import random as _random
 
 RUNNING_ANALYZED_METRICS = ['cadence_spm', 'pace_min_per_mile', 'distance_mi']
 
-QUICK_DASHBOARD_MA_BANDWIDTH_DAYS = 14
 MOCK_MA_BANDWIDTH_DAYS = 21
 
 bp = Blueprint(
@@ -45,57 +44,37 @@ DASHBOARD_FILES = [
 CURATED_DASHBOARD_FILES = DASHBOARD_FILES
 
 
-def _load_dashboard_timeseries(source: str = 'local') -> pd.DataFrame:
+# dataset -> metrics, matching garmin.analysis.analysis_pipeline.HEALTH_METRICS.
+# The web app only ever reads the precomputed curated/analyzed/ layer here
+# (written by garmin.scripts.manual_analyze_metrics) -- no GP fitting happens
+# on request.
+HEALTH_ANALYZED_METRICS = {
+    'heart_rate': ['resting_hr'],
+    'steps': ['total_steps'],
+    'health_stats': ['weight', 'body_fat', 'bone_mass', 'muscle_mass'],
+}
+
+
+def _health_analyzed_payload(source: str = 'local') -> dict | None:
     store = curated_s3 if source == 's3' else curated_local
 
-    heart_rate = store.load_daily('heart_rate')
-    steps = store.load_daily('steps')
-    health_stats = store.load_daily('health_stats')
+    analyzed = {}
+    any_analyzed = False
+    for dataset, metrics in HEALTH_ANALYZED_METRICS.items():
+        for metric in metrics:
+            points = store.load_analyzed_points(dataset, metric)
+            trend = store.load_analyzed_trend(dataset, metric)
+            if not points.empty:
+                any_analyzed = True
+            analyzed[metric] = {
+                'points': _timeseries_records(points) if not points.empty else [],
+                'trend': _timeseries_records(trend) if not trend.empty else [],
+            }
 
-    frames = []
-    if not heart_rate.empty:
-        hr_frame = heart_rate[['date', 'resting_hr']].copy()
-        hr_frame['date'] = pd.to_datetime(hr_frame['date'])
-        frames.append(hr_frame)
-    if not steps.empty:
-        steps_frame = steps[['date', 'total_steps']].copy()
-        steps_frame['date'] = pd.to_datetime(steps_frame['date'])
-        frames.append(steps_frame)
-    if not health_stats.empty:
-        weight_frame = health_stats[['date', 'weight', 'body_fat', 'bone_mass', 'muscle_mass']].copy()
-        weight_frame['date'] = pd.to_datetime(weight_frame['date'])
-        frames.append(weight_frame)
+    if not any_analyzed:
+        return None
 
-    if not frames:
-        return pd.DataFrame(columns=['date', 'resting_hr', 'total_steps', 'weight', 'body_fat', 'bone_mass', 'muscle_mass'])
-
-    combined = frames[0]
-    for frame in frames[1:]:
-        combined = combined.merge(frame, on='date', how='outer')
-
-    combined = combined.sort_values('date').reset_index(drop=True)
-    combined = _add_gaussian_moving_averages(
-        combined, ['resting_hr', 'total_steps', 'weight', 'body_fat', 'bone_mass', 'muscle_mass']
-    )
-    return combined
-
-
-def _add_gaussian_moving_averages(
-    df: pd.DataFrame,
-    columns: list[str],
-    bandwidth: int = QUICK_DASHBOARD_MA_BANDWIDTH_DAYS,
-) -> pd.DataFrame:
-    present_columns = [col for col in columns if col in df.columns]
-    if df.empty or not present_columns:
-        for col in columns:
-            df[f'{col}_ma'] = pd.Series(dtype='float64')
-        return df
-
-    processor = GarminDataProcessor()
-    ma_df = processor.calculate_moving_averages(df, present_columns, kernels=['gaussian'], bandwidths=[bandwidth])
-    for col in present_columns:
-        df[f'{col}_ma'] = ma_df[f'{col}_gaussian_{bandwidth}']
-    return df
+    return {'analyzed': analyzed}
 
 
 def _timeseries_records(df: pd.DataFrame) -> list[dict[str, object]]:
@@ -243,7 +222,7 @@ def _running_real_payload(source: str = 'local') -> dict | None:
     df = df.sort_values('date').reset_index(drop=True)
 
     # Quality classification + GP trend fitting are precomputed by
-    # garmin.scripts.manual_analyze_activities into curated/analyzed/ — this
+    # garmin.scripts.manual_analyze_metrics into curated/analyzed/ — this
     # route only ever reads that output, it never fits a GP on request.
     analyzed = {}
     any_analyzed = False
@@ -515,11 +494,18 @@ def quick_dashboard_data():
         source = 'local'
 
     try:
-        df = _load_dashboard_timeseries(source=source)
-        return jsonify({
-            'source': source,
-            'rows': _timeseries_records(df),
-        })
+        payload = _health_analyzed_payload(source=source)
+        if payload is None:
+            return jsonify({
+                'source': source,
+                'analyzed': {},
+                'error': (
+                    'No analyzed health data yet. Run '
+                    'python -m garmin.scripts.manual_analyze_metrics to populate it.'
+                ),
+            })
+        payload['source'] = source
+        return jsonify(payload)
     except Exception as e:
         print(f"Error loading dashboard data: {e}")
         traceback.print_exc()

@@ -1,14 +1,15 @@
-"""Batch analysis pipeline: curated activity data -> analyzed layer.
+"""Batch analysis pipeline: curated data -> analyzed layer.
 
 Runs quality classification (garmin.analysis.quality) and GP trend fitting
-(garmin.analysis.trend_gp) once per metric and writes the results to
-CuratedDataStore's "analyzed" layer, so the web app never has to compute
-either on request -- it only reads precomputed output.
+(garmin.analysis.trend_gp) once per metric -- across both per-activity data
+(running) and daily health metrics (heart rate, steps, weight, ...) -- and
+writes the results to CuratedDataStore's "analyzed" layer, so the web app
+never has to compute either on request; it only reads precomputed output.
 
 Layers, per the repo's raw -> curated -> analyzed -> viewer split:
-- curated/activities/summary/<dataset>.parquet   (raw-ish, one row per activity)
+- curated/activities/summary/<dataset>.parquet  or  curated/daily/<dataset>.parquet  (source)
 - curated/analyzed/<dataset>/<metric>_points.parquet  (per-point quality tier/weight)
-- curated/analyzed/<dataset>/<metric>_trend.parquet   (GP mean + 95% CI curve)
+- curated/analyzed/<dataset>/<metric>_trend.parquet   (GP mean + 68%/95% predictive bands)
 """
 
 from __future__ import annotations
@@ -22,6 +23,16 @@ from garmin.io.curated_store import CuratedDataStore
 # (dataset, metric) pairs to analyze. Extend as more metrics need the same
 # quality-classification + GP-trend treatment.
 RUNNING_METRICS = ["cadence_spm", "pace_min_per_mile", "distance_mi"]
+
+# Health metrics come from curated/daily/<dataset>.parquet (dense, ~daily
+# readings) rather than the sparser per-activity summaries, so they get a
+# shorter GP length scale.
+HEALTH_METRICS = {
+    "heart_rate": ["resting_hr"],
+    "steps": ["total_steps"],
+    "health_stats": ["weight", "body_fat", "bone_mass", "muscle_mass"],
+}
+HEALTH_LENGTH_SCALE_DAYS = 14.0
 
 
 def analyze_metric(
@@ -62,5 +73,21 @@ def analyze_running(curated_store: CuratedDataStore) -> None:
         print(f"Analyzed running.{metric}: quality points + GP trend written.")
 
 
+def analyze_health(curated_store: CuratedDataStore) -> None:
+    for dataset, metrics in HEALTH_METRICS.items():
+        df = curated_store.load_daily(dataset)
+        if df.empty:
+            print(f"No curated {dataset} data to analyze.")
+            continue
+
+        df = df.copy()
+        df["date"] = pd.to_datetime(df["date"])
+
+        for metric in metrics:
+            analyze_metric(curated_store, dataset, metric, df, length_scale_days=HEALTH_LENGTH_SCALE_DAYS)
+            print(f"Analyzed {dataset}.{metric}: quality points + GP trend written.")
+
+
 def analyze_all(curated_store: CuratedDataStore) -> None:
     analyze_running(curated_store)
+    analyze_health(curated_store)

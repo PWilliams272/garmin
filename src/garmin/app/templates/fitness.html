@@ -279,7 +279,7 @@ function metricStatPanel(elementId, rows, key, format, betterWhen) {
 
 // Renders a chart from precomputed quality-tiered points + a GP mean/CI trend
 // (garmin.analysis.quality / garmin.analysis.trend_gp, run offline by
-// manual_analyze_activities.py -- nothing here is fit on request).
+// manual_analyze_metrics.py -- nothing here is fit on request).
 function renderAnalyzedChart(chartElementId, outlierElementId, analyzed, metricKey, colorToken, yAxisTitle, anchorDate, layoutExtra) {
     const color = token(colorToken);
     const allPoints = analyzed.points || [];
@@ -293,11 +293,23 @@ function renderAnalyzedChart(chartElementId, outlierElementId, analyzed, metricK
     const traces = [];
 
     if (trend.length) {
+        // 95% band: dotted outline only, no fill -- the wider envelope.
+        traces.push({
+            x: trend.map((t) => t.date), y: trend.map((t) => t.upper_95),
+            type: 'scatter', mode: 'lines', line: { color, width: 1, dash: 'dot' },
+            hoverinfo: 'skip', showlegend: false, name: '95% interval',
+        });
+        traces.push({
+            x: trend.map((t) => t.date), y: trend.map((t) => t.lower_95),
+            type: 'scatter', mode: 'lines', line: { color, width: 1, dash: 'dot' },
+            hoverinfo: 'skip', showlegend: false, name: '95% interval',
+        });
+        // 68% band: shaded fill -- the tighter, more likely range.
         traces.push({
             x: trend.map((t) => t.date).concat(trend.map((t) => t.date).slice().reverse()),
-            y: trend.map((t) => t.upper_95).concat(trend.map((t) => t.lower_95).slice().reverse()),
-            type: 'scatter', mode: 'lines', fill: 'toself', fillcolor: color + '22',
-            line: { color: 'transparent' }, hoverinfo: 'skip', showlegend: false,
+            y: trend.map((t) => t.upper_68).concat(trend.map((t) => t.lower_68).slice().reverse()),
+            type: 'scatter', mode: 'lines', fill: 'toself', fillcolor: color + '33',
+            line: { color: 'transparent' }, hoverinfo: 'skip', showlegend: false, name: '68% interval',
         });
     }
 

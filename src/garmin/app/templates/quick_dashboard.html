@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Garmin Dashboard{% endblock %}
-{% block subtitle %}Daily heart rate, steps, and weight — points are raw readings, lines are the 14-day gaussian moving average{% endblock %}
+{% block subtitle %}Points are raw readings; the shaded/dotted bands are a GP-fitted trend (68%/95% predictive intervals). Uncertain readings render hollow; excluded outliers are noted, not hidden silently.{% endblock %}
 {% block head %}
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 {% endblock %}
@@ -52,10 +52,12 @@
             <div class="card chart-card">
                 <div class="section-heading">Resting Heart Rate</div>
                 <div class="chart-host" id="heart-rate-chart"></div>
+                <div class="status-line" id="heart-rate-outliers"></div>
             </div>
             <div class="card chart-card">
                 <div class="section-heading">Daily Steps</div>
                 <div class="chart-host" id="steps-chart"></div>
+                <div class="status-line" id="steps-outliers"></div>
             </div>
             <div class="card chart-card">
                 <div class="section-heading" style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px 16px; border-bottom: 0; padding-bottom: 0; margin-bottom: 4px;">
@@ -77,6 +79,7 @@
                 </div>
                 <div style="border-bottom: 1px solid var(--lg-border); margin-bottom: 12px;"></div>
                 <div class="chart-host" id="weight-chart"></div>
+                <div class="status-line" id="weight-outliers"></div>
             </div>
         </section>
 
@@ -101,8 +104,12 @@ function token(name) {
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
+function coerceDate(value) {
+    return value ? new Date(value + 'T00:00:00') : null;
+}
+
 const chartState = {
-    rows: [],
+    analyzed: null,
     source: {{ source|tojson }},
     rangeDays: 180,
     customStart: null,
@@ -111,53 +118,23 @@ const chartState = {
 
 const chartConfig = {
     heartRate: {
-        elementId: 'heart-rate-chart',
-        key: 'resting_hr',
-        maKey: 'resting_hr_ma',
-        colorToken: '--lg-gold',
-        kpiId: 'kpi-heart-rate',
-        yAxisTitle: 'Resting Heart Rate (bpm)',
+        chartId: 'heart-rate-chart', outlierId: 'heart-rate-outliers', kpiId: 'kpi-heart-rate',
+        metricKey: 'resting_hr', colorToken: '--lg-gold', yAxisTitle: 'Resting Heart Rate (bpm)',
         format: (v) => v === null ? '—' : Math.round(v) + ' bpm',
     },
     steps: {
-        elementId: 'steps-chart',
-        key: 'total_steps',
-        maKey: 'total_steps_ma',
-        colorToken: '--lg-highlight',
-        kpiId: 'kpi-steps',
-        yAxisTitle: 'Steps',
+        chartId: 'steps-chart', outlierId: 'steps-outliers', kpiId: 'kpi-steps',
+        metricKey: 'total_steps', colorToken: '--lg-highlight', yAxisTitle: 'Steps',
         format: (v) => v === null ? '—' : Math.round(v).toLocaleString(),
     },
     weight: {
-        elementId: 'weight-chart',
-        key: 'weight',
-        maKey: 'weight_ma',
-        colorToken: '--lg-success',
-        kpiId: 'kpi-weight',
-        yAxisTitle: 'Weight (lb)',
+        chartId: 'weight-chart', outlierId: 'weight-outliers', kpiId: 'kpi-weight',
+        metricKey: 'weight', colorToken: '--lg-success', yAxisTitle: 'Weight (lb)',
         format: (v) => v === null ? '—' : v.toFixed(1) + ' lb',
         overlays: [
-            {
-                checkboxId: 'overlay-body-fat',
-                key: 'body_fat',
-                maKey: 'body_fat_ma',
-                colorToken: '--lg-warning',
-                yAxisTitle: 'Body Fat (%)',
-            },
-            {
-                checkboxId: 'overlay-bone-mass',
-                key: 'bone_mass',
-                maKey: 'bone_mass_ma',
-                colorToken: '--lg-danger',
-                yAxisTitle: 'Bone Mass (lb)',
-            },
-            {
-                checkboxId: 'overlay-muscle-mass',
-                key: 'muscle_mass',
-                maKey: 'muscle_mass_ma',
-                colorToken: '--lg-info',
-                yAxisTitle: 'Muscle Mass (lb)',
-            },
+            { checkboxId: 'overlay-body-fat', metricKey: 'body_fat', colorToken: '--lg-warning', yAxisTitle: 'Body Fat (%)' },
+            { checkboxId: 'overlay-bone-mass', metricKey: 'bone_mass', colorToken: '--lg-danger', yAxisTitle: 'Bone Mass (lb)' },
+            { checkboxId: 'overlay-muscle-mass', metricKey: 'muscle_mass', colorToken: '--lg-info', yAxisTitle: 'Muscle Mass (lb)' },
         ],
     },
 };
@@ -166,40 +143,56 @@ function setStatus(message) {
     document.getElementById('dashboard-status').textContent = message;
 }
 
-function coerceDate(value) {
-    return value ? new Date(value + 'T00:00:00') : null;
-}
-
-function filteredRows() {
-    if (!chartState.rows.length) {
-        return chartState.rows;
-    }
-
+function filterByRange(rows, anchorDate, dateKey) {
+    dateKey = dateKey || 'date';
+    if (!rows.length) return rows;
     if (chartState.rangeDays === 'custom') {
-        const startDate = chartState.customStart ? coerceDate(chartState.customStart) : null;
-        const endDate = chartState.customEnd ? coerceDate(chartState.customEnd) : null;
-        return chartState.rows.filter((row) => {
-            const rowDate = coerceDate(row.date);
-            if (!rowDate) return false;
-            if (startDate && rowDate < startDate) return false;
-            if (endDate && rowDate > endDate) return false;
+        const start = chartState.customStart ? coerceDate(chartState.customStart) : null;
+        const end = chartState.customEnd ? coerceDate(chartState.customEnd) : null;
+        return rows.filter((r) => {
+            const d = coerceDate(r[dateKey]);
+            if (!d) return false;
+            if (start && d < start) return false;
+            if (end && d > end) return false;
             return true;
         });
     }
-
-    const endDate = coerceDate(chartState.rows[chartState.rows.length - 1].date);
-    const startDate = new Date(endDate);
+    const startDate = new Date(anchorDate);
     startDate.setDate(startDate.getDate() - chartState.rangeDays);
-
-    return chartState.rows.filter((row) => {
-        const rowDate = coerceDate(row.date);
-        return rowDate && rowDate >= startDate && rowDate <= endDate;
+    return rows.filter((r) => {
+        const d = coerceDate(r[dateKey]);
+        return d && d >= startDate && d <= anchorDate;
     });
 }
 
-function updateKpi(config, rows) {
-    for (let i = rows.length - 1; i >= 0; i -= 1) {
-        const value = rows[i][config.key];
+function overallAnchorDate() {
+    let latest = null;
+    Object.values(chartState.analyzed || {}).forEach((entry) => {
+        const points = entry.points || [];
+        if (points.length) {
+            const d = coerceDate(points[points.length - 1].date);
+            if (!latest || d > latest) latest = d;
+        }
+    });
+    return latest || new Date();
+}
+
+function baseLayout(yTitle, extra) {
+    return Object.assign({
+        margin: { l: 60, r: 16, t: 8, b: 36 },
+        paper_bgcolor: 'transparent',
+        plot_bgcolor: 'transparent',
+        font: { color: token('--lg-text-2'), size: 12, family: 'IBM Plex Sans, sans-serif' },
+        xaxis: { gridcolor: token('--lg-border'), zeroline: false },
+        yaxis: { gridcolor: token('--lg-border'), zeroline: false, title: { text: yTitle, font: { size: 11 } } },
+        showlegend: false,
+    }, extra || {});
+}
+
+function updateKpi(config, points) {
+    for (let i = points.length - 1; i >= 0; i -= 1) {
+        if (points[i].quality_tier === 'hard') continue;
+        const value = points[i][config.metricKey];
         if (value !== null && value !== undefined) {
             document.getElementById(config.kpiId).textContent = config.format(value);
             return;
@@ -208,98 +201,104 @@ function updateKpi(config, rows) {
     document.getElementById(config.kpiId).textContent = '—';
 }
 
-function seriesTraces(rows, x, key, maKey, colorToken, yaxis) {
-    const color = token(colorToken);
-    const pointsTrace = {
-        x: x,
-        y: rows.map((row) => row[key]),
-        type: 'scatter',
-        mode: 'markers',
-        marker: { color: color, size: 4, opacity: 0.35 },
-        name: 'Daily',
-        yaxis: yaxis,
+// Renders a metric from precomputed quality-tiered points + a GP mean/68%/95%
+// predictive-interval trend (garmin.analysis.quality / garmin.analysis.trend_gp,
+// run offline by manual_analyze_metrics.py -- nothing here is fit on request).
+// Optional `overlays` render as points + trend-line-only (no bands, to keep a
+// multi-axis chart legible) on their own free right-side y-axis.
+function renderAnalyzedChart(config, anchorDate) {
+    const entry = (chartState.analyzed && chartState.analyzed[config.metricKey]) || { points: [], trend: [] };
+    const allPoints = entry.points || [];
+    const allTrend = entry.trend || [];
+
+    const visiblePoints = filterByRange(allPoints, anchorDate).filter((p) => p.quality_tier !== 'hard');
+    const normalPoints = visiblePoints.filter((p) => p.quality_tier === 'normal');
+    const softPoints = visiblePoints.filter((p) => p.quality_tier === 'soft');
+    const trend = filterByRange(allTrend, anchorDate);
+    const color = token(config.colorToken);
+
+    const traces = [];
+    if (trend.length) {
+        traces.push({ x: trend.map(t => t.date), y: trend.map(t => t.upper_95), type: 'scatter', mode: 'lines', line: { color, width: 1, dash: 'dot' }, hoverinfo: 'skip', showlegend: false });
+        traces.push({ x: trend.map(t => t.date), y: trend.map(t => t.lower_95), type: 'scatter', mode: 'lines', line: { color, width: 1, dash: 'dot' }, hoverinfo: 'skip', showlegend: false });
+        traces.push({
+            x: trend.map(t => t.date).concat(trend.map(t => t.date).slice().reverse()),
+            y: trend.map(t => t.upper_68).concat(trend.map(t => t.lower_68).slice().reverse()),
+            type: 'scatter', mode: 'lines', fill: 'toself', fillcolor: color + '33',
+            line: { color: 'transparent' }, hoverinfo: 'skip', showlegend: false,
+        });
+    }
+    traces.push({
+        x: normalPoints.map(p => p.date), y: normalPoints.map(p => p[config.metricKey]),
+        type: 'scatter', mode: 'markers', marker: { color, size: 4, opacity: 0.35 }, yaxis: 'y',
         hovertemplate: '%{x}<br>%{y}<extra></extra>',
-    };
-    const maTrace = {
-        x: x,
-        y: rows.map((row) => row[maKey]),
-        type: 'scatter',
-        mode: 'lines',
-        line: { color: color, width: 2.5 },
-        name: '14-day average',
-        yaxis: yaxis,
-        hovertemplate: '%{x}<br>%{y:.1f}<extra></extra>',
-    };
-    return [pointsTrace, maTrace];
-}
+    });
+    traces.push({
+        x: softPoints.map(p => p.date), y: softPoints.map(p => p[config.metricKey]),
+        type: 'scatter', mode: 'markers',
+        marker: { color, size: 6, opacity: 0.6, symbol: 'circle-open', line: { width: 1.5, color } },
+        yaxis: 'y', hovertemplate: '%{x}<br>%{y} (lower confidence)<extra></extra>',
+    });
+    if (trend.length) {
+        traces.push({ x: trend.map(t => t.date), y: trend.map(t => t.mean), type: 'scatter', mode: 'lines', line: { color, width: 2.5 } });
+    }
 
-function checkedOverlays(config) {
-    if (!config.overlays) return [];
-    return config.overlays.filter((overlay) => document.getElementById(overlay.checkboxId).checked);
-}
+    const overlaysChecked = (config.overlays || []).filter((o) => document.getElementById(o.checkboxId).checked);
+    const layout = baseLayout(config.yAxisTitle, { margin: { l: 60, r: overlaysChecked.length ? 24 : 16, t: 8, b: 36 } });
 
-function renderSingleChart(config) {
-    const rows = filteredRows();
-    const x = rows.map((row) => row.date);
-    const textColor = token('--lg-text-2');
-    const borderColor = token('--lg-border');
-    const overlays = checkedOverlays(config);
-
-    let traces = seriesTraces(rows, x, config.key, config.maKey, config.colorToken, 'y');
-
-    const layout = {
-        margin: { l: 60, r: overlays.length ? 24 : 16, t: 8, b: 36 },
-        paper_bgcolor: 'transparent',
-        plot_bgcolor: 'transparent',
-        font: { color: textColor, size: 12, family: 'IBM Plex Sans, sans-serif' },
-        xaxis: { gridcolor: borderColor, zeroline: false },
-        yaxis: {
-            gridcolor: borderColor,
-            zeroline: false,
-            title: { text: config.yAxisTitle, font: { color: textColor, size: 11 } },
-        },
-        showlegend: false,
-    };
-
-    if (overlays.length > 0) {
-        // Each overlay gets its own y-axis on the right, stacked outward from the
-        // plot edge; the plotting area (xaxis domain) shrinks to make room for them.
+    if (overlaysChecked.length > 0) {
         const axisGap = 0.12;
-        const extraAxes = overlays.length - 1;
-        const domainMax = Math.max(0.4, 1 - extraAxes * axisGap);
+        const domainMax = Math.max(0.4, 1 - (overlaysChecked.length - 1) * axisGap);
         layout.xaxis.domain = [0, domainMax];
 
-        overlays.forEach((overlay, idx) => {
+        overlaysChecked.forEach((overlay, idx) => {
             const axisNum = idx + 2;
-            traces = traces.concat(
-                seriesTraces(rows, x, overlay.key, overlay.maKey, overlay.colorToken, 'y' + axisNum)
-            );
+            const overlayEntry = (chartState.analyzed && chartState.analyzed[overlay.metricKey]) || { points: [], trend: [] };
+            const overlayPoints = filterByRange(overlayEntry.points || [], anchorDate).filter((p) => p.quality_tier !== 'hard');
+            const overlayTrend = filterByRange(overlayEntry.trend || [], anchorDate);
+            const overlayColor = token(overlay.colorToken);
+
+            traces.push({
+                x: overlayPoints.map(p => p.date), y: overlayPoints.map(p => p[overlay.metricKey]),
+                type: 'scatter', mode: 'markers', marker: { color: overlayColor, size: 4, opacity: 0.3 },
+                yaxis: 'y' + axisNum, hovertemplate: '%{x}<br>%{y}<extra></extra>',
+            });
+            if (overlayTrend.length) {
+                traces.push({
+                    x: overlayTrend.map(t => t.date), y: overlayTrend.map(t => t.mean),
+                    type: 'scatter', mode: 'lines', line: { color: overlayColor, width: 2 }, yaxis: 'y' + axisNum,
+                });
+            }
             layout['yaxis' + axisNum] = {
-                overlaying: 'y',
-                side: 'right',
-                anchor: 'free',
-                position: Math.min(1, domainMax + idx * axisGap),
-                gridcolor: 'transparent',
-                zeroline: false,
-                title: { text: overlay.yAxisTitle, font: { color: token(overlay.colorToken), size: 11 } },
-                tickfont: { color: token(overlay.colorToken) },
+                overlaying: 'y', side: 'right', anchor: 'free', position: Math.min(1, domainMax + idx * axisGap),
+                gridcolor: 'transparent', zeroline: false,
+                title: { text: overlay.yAxisTitle, font: { color: overlayColor, size: 11 } },
+                tickfont: { color: overlayColor },
             };
         });
     }
 
-    Plotly.react(config.elementId, traces, layout, {
-        responsive: true,
-        displaylogo: false,
-        modeBarButtonsToRemove: ['lasso2d', 'select2d'],
-    });
+    Plotly.react(config.chartId, traces, layout, { responsive: true, displaylogo: false, modeBarButtonsToRemove: ['lasso2d', 'select2d'] });
 
-    updateKpi(config, rows);
+    const hardPoints = filterByRange(allPoints, anchorDate).filter((p) => p.quality_tier === 'hard');
+    const outlierEl = document.getElementById(config.outlierId);
+    if (hardPoints.length) {
+        outlierEl.textContent = `⚠ ${hardPoints.length} point${hardPoints.length > 1 ? 's' : ''} excluded (data quality) — hover for details`;
+        outlierEl.title = hardPoints.map(p => `${p.date}: ${p[config.metricKey]}`).join(', ');
+    } else {
+        outlierEl.textContent = '';
+        outlierEl.title = '';
+    }
+
+    updateKpi(config, allPoints);
 }
 
 function renderCharts() {
-    renderSingleChart(chartConfig.heartRate);
-    renderSingleChart(chartConfig.steps);
-    renderSingleChart(chartConfig.weight);
+    if (!chartState.analyzed) return;
+    const anchorDate = overallAnchorDate();
+    renderAnalyzedChart(chartConfig.heartRate, anchorDate);
+    renderAnalyzedChart(chartConfig.steps, anchorDate);
+    renderAnalyzedChart(chartConfig.weight, anchorDate);
 }
 
 async function loadDashboard(source) {
@@ -310,30 +309,29 @@ async function loadDashboard(source) {
             throw new Error('Failed to load dashboard data (' + response.status + '): ' + (response.statusText || 'Unknown error'));
         }
         const payload = await response.json();
-        if (payload.error) {
-            throw new Error('Server error: ' + payload.error);
-        }
-        chartState.rows = payload.rows;
+        chartState.analyzed = payload.analyzed || {};
         chartState.source = payload.source;
-        if (payload.rows.length === 0) {
-            setStatus('No data available. Check if curated parquet files exist.');
-            renderCharts();
+        const hasAnyData = Object.values(chartState.analyzed).some((entry) => (entry.points || []).length > 0);
+        if (!hasAnyData) {
+            setStatus(payload.error || 'No analyzed data available yet.');
             return;
         }
         renderCharts();
-        setStatus('Loaded ' + payload.rows.length + ' daily rows from ' + payload.source + '.');
+        setStatus('Loaded from ' + payload.source + '.');
     } catch (error) {
         setStatus('Error: ' + error.message);
     }
 }
 
 function setDefaultCustomRange() {
-    if (!chartState.rows.length) return;
+    if (!chartState.analyzed) return;
+    const stepsPoints = (chartState.analyzed.total_steps && chartState.analyzed.total_steps.points) || [];
+    if (!stepsPoints.length) return;
     if (!document.getElementById('custom-start-date').value) {
-        document.getElementById('custom-start-date').value = chartState.rows[0].date;
+        document.getElementById('custom-start-date').value = stepsPoints[0].date;
     }
     if (!document.getElementById('custom-end-date').value) {
-        document.getElementById('custom-end-date').value = chartState.rows[chartState.rows.length - 1].date;
+        document.getElementById('custom-end-date').value = stepsPoints[stepsPoints.length - 1].date;
     }
 }
 
@@ -369,7 +367,7 @@ document.getElementById('source-select').addEventListener('change', (event) => {
 
 chartConfig.weight.overlays.forEach((overlay) => {
     document.getElementById(overlay.checkboxId).addEventListener('change', () => {
-        renderSingleChart(chartConfig.weight);
+        renderAnalyzedChart(chartConfig.weight, overallAnchorDate());
     });
 });
 
