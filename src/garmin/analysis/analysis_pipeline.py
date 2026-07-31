@@ -198,6 +198,39 @@ def analyze_running(curated_store: CuratedDataStore) -> None:
         print(f"Analyzed running.{metric}: quality points + GP trend written.")
 
 
+# Metrics pull_cardio_summary (garmin.pullers.activities) always produces,
+# regardless of sport -- unlike running's cadence_spm, which is running-only
+# and stays in RUNNING_METRICS/analyze_running above.
+CARDIO_METRICS = ["distance_mi", "pace_min_per_mile"]
+
+
+def analyze_cardio_activities(curated_store: CuratedDataStore) -> None:
+    """Same single-scale-GP treatment as analyze_running, generalized to every
+    other cardio activity dataset (cycling, hiking, swimming, ...) in
+    updaters.ACTIVITY_DATASETS. Running and strength keep their own richer
+    analyze_running/analyze_lifting and are skipped here.
+    """
+    # Imported lazily (not at module top) to avoid a hard import-time
+    # dependency from analysis -> updaters for a single small constant list.
+    from garmin.updaters import ACTIVITY_DATASETS
+
+    for dataset in ACTIVITY_DATASETS:
+        if dataset in {"running", "strength"}:
+            continue
+
+        summary = curated_store.load_activity_summary(dataset)
+        if summary.empty:
+            print(f"No curated {dataset} data to analyze.")
+            continue
+
+        summary = summary.copy()
+        summary["date"] = pd.to_datetime(summary["date"])
+
+        for metric in CARDIO_METRICS:
+            analyze_metric(curated_store, dataset, metric, summary)
+            print(f"Analyzed {dataset}.{metric}: quality points + GP trend written.")
+
+
 def analyze_health(curated_store: CuratedDataStore) -> None:
     for dataset, metrics in HEALTH_METRICS.items():
         df = curated_store.load_daily(dataset)
@@ -210,10 +243,12 @@ def analyze_health(curated_store: CuratedDataStore) -> None:
 
         for metric in metrics:
             analyze_health_metric(curated_store, dataset, metric, df)
-            print(f"Analyzed {dataset}.{metric}: quality points + GP-multiscale + STS trends written.")
+            gp_note = "GP-multiscale + " if FIT_GP_TREND else ""
+            print(f"Analyzed {dataset}.{metric}: quality points + {gp_note}STS trend written.")
 
 
 def analyze_all(curated_store: CuratedDataStore) -> None:
     analyze_running(curated_store)
+    analyze_cardio_activities(curated_store)
     analyze_lifting(curated_store)
     analyze_health(curated_store)
