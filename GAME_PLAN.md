@@ -12,7 +12,9 @@ Complements `GARMIN_HANDOFF.md` (AWS/ops reference) and `CLAUDE.md` (architectur
 
 ## Goal 1 — Already Substantially Done
 
-See `GARMIN_HANDOFF.md` for the verified live state: the Lambda's 128MB→512MB timeout fix is deployed and verified, a state-leak bug in the detailed puller is fixed, and detailed timing logs are live. Remaining work: keep monitoring scheduled runs, watch for real auth failures vs. infra timing, and continue packaging cleanup. The 8 curated datasets (`health_stats`, `steps`, `sleep`, `stress`, `body_battery`, `heart_rate`, `hrv`, `respiration`) are confirmed actively updating daily as of 2026-07-29.
+See `GARMIN_HANDOFF.md` for the verified live state: the Lambda's 128MB→512MB timeout fix is deployed and verified, a state-leak bug in the detailed puller is fixed, and detailed timing logs are live. The 8 curated datasets (`health_stats`, `steps`, `sleep`, `stress`, `body_battery`, `heart_rate`, `hrv`, `respiration`) are confirmed actively updating daily as of 2026-07-29.
+
+**The full pull → analyze → viewer-cache pipeline is now scheduled end to end**, not just the pull: `garmin-data-updater` (pull, 3:00 UTC) → `garmin-data-analyzer` (analysis + viewer-cache build, container-image Lambda since scipy/scikit-learn/statsmodels don't fit a zip Lambda's 250MB limit, 3:30 UTC). This is what makes the deployed app fast against S3 (one cached JSON read per page instead of a dozen+ individual S3 reads live). Remaining work: keep monitoring scheduled runs, watch for real auth failures vs. infra timing, continue packaging cleanup, and backfill `curated/activities/` (running/strength/lifting) to S3 -- it currently only exists locally, so those viewer-cache entries are skipped and the deployed app's Fitness/Activities pages still serve mock data.
 
 ## Goal 2 — Workouts/Activities: Running + Strength Done, Multi-Sport In Progress
 

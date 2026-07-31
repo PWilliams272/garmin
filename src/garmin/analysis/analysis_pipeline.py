@@ -45,6 +45,14 @@ HEALTH_METRICS = {
     "health_stats": ["weight", "body_fat", "bone_mass", "muscle_mass"],
 }
 
+# The frontend only ever renders the STS trend right now (quick_dashboard.html's
+# SHOW_GP_TREND = false) -- the multiscale GP is kept in the codebase for a
+# possible future side-by-side comparison, but isn't worth its cost while
+# unused: fitting it against ~4000-day-long daily series is what pushed the
+# analyzer Lambda's memory past 1024MB and got it OOM-killed. Flip this back
+# on (and give the Lambda more memory) if the GP comparison view comes back.
+FIT_GP_TREND = False
+
 # An exercise needs at least this many distinct sessions before a trend is
 # worth fitting -- avoids a near-empty STS fit on a exercise tried once or
 # twice. Chosen by inspecting real set counts (see this repo's strength
@@ -106,10 +114,11 @@ def analyze_health_metric(curated_store: CuratedDataStore, dataset: str, metric:
 
     fittable = points[points["quality_weight"] > 0]
 
-    gp_trend, gp_day_to_day_std = fit_gp_multiscale_trend(fittable["date"], fittable[metric], fittable["quality_weight"])
-    if not gp_trend.empty:
-        gp_trend["day_to_day_std"] = gp_day_to_day_std
-    curated_store.write_analyzed_trend(dataset, metric, gp_trend, kind="gp_multiscale")
+    if FIT_GP_TREND:
+        gp_trend, gp_day_to_day_std = fit_gp_multiscale_trend(fittable["date"], fittable[metric], fittable["quality_weight"])
+        if not gp_trend.empty:
+            gp_trend["day_to_day_std"] = gp_day_to_day_std
+        curated_store.write_analyzed_trend(dataset, metric, gp_trend, kind="gp_multiscale")
 
     sts_trend, sts_day_to_day_std = fit_structural_trend(
         fittable["date"], fittable[metric], fittable["quality_weight"],
