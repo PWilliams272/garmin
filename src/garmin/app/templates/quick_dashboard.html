@@ -23,8 +23,8 @@
                             <button type="button" data-days="7">7D</button>
                             <button type="button" data-days="30">30D</button>
                             <button type="button" data-days="90">90D</button>
-                            <button type="button" data-days="180" class="active">180D</button>
-                            <button type="button" data-days="365">1Y</button>
+                            <button type="button" data-days="180">180D</button>
+                            <button type="button" data-days="365" class="active">1Y</button>
                             <button type="button" data-days="730">2Y</button>
                             <button type="button" data-days="custom">Custom</button>
                         </div>
@@ -96,7 +96,7 @@ function coerceDate(value) {
 const chartState = {
     analyzed: null,
     source: {{ source|tojson }},
-    rangeDays: 180,
+    rangeDays: 365,
     customStart: null,
     customEnd: null,
 };
@@ -193,7 +193,7 @@ function trendValueNear(fullTrend, targetDate) {
 
 function trendDeltaText(config, delta) {
     if (delta === null || delta === undefined || Number.isNaN(delta)) return { text: '—', color: token('--lg-text-2') };
-    const arrow = delta > 0 ? '↑' : (delta < 0 ? '↓' : '→');
+    const arrow = delta > 0 ? '↗' : (delta < 0 ? '↘' : '→');
     let color = token('--lg-text-2');
     if (config.betterWhen === 'higher') color = delta >= 0 ? token('--lg-success') : token('--lg-danger');
     if (config.betterWhen === 'lower') color = delta <= 0 ? token('--lg-success') : token('--lg-danger');
@@ -379,6 +379,15 @@ function renderAnalyzedChart(config, anchorDate) {
         shapes,
         annotations,
     });
+    // Plotly's autorange pads a margin around the data by default, which
+    // reads as "the axis starts before the data actually starts" -- pin the
+    // range to the exact span of what's displayed instead.
+    const xDates = visiblePoints.map(p => coerceDate(p.date)).concat(stsTrend.map(t => coerceDate(t.date))).filter(Boolean);
+    if (xDates.length) {
+        const xMin = new Date(Math.min(...xDates));
+        const xMax = new Date(Math.max(...xDates));
+        layout.xaxis.range = [xMin, xMax];
+    }
     layout.xaxis.domain = [0, CONTENT_X_MAX];
     layout.xaxis.showticklabels = false;
     layout.xaxis.showline = true;
@@ -411,8 +420,9 @@ function renderAnalyzedChart(config, anchorDate) {
     };
     layout.yaxis11 = {
         domain: [0, 0.34], anchor: 'x10', matches: 'y9',
-        showticklabels: false, gridcolor: 'transparent', zeroline: false,
+        showticklabels: false, gridcolor: borderColor, zeroline: false,
         showline: true, linecolor: borderColor, linewidth: 1,
+        ticks: 'outside', tickcolor: borderColor, ticklen: 4,
     };
 
     if (overlaysChecked.length > 0) {
