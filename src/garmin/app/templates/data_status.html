@@ -22,11 +22,13 @@
     <div class="section-heading">Pull Status Calendar</div>
     <div style="display: flex; gap: 16px; align-items: center; margin-bottom: 10px; font-size: var(--fs-sm); color: var(--lg-text-2);">
         <span><span class="status-swatch" style="background: var(--lg-success);"></span> Fetched</span>
-        <span><span class="status-swatch" style="background: var(--lg-text-3);"></span> No data (confirmed empty)</span>
+        <span><span class="status-swatch" style="background: var(--lg-text-2);"></span> No data (confirmed empty)</span>
         <span><span class="status-swatch" style="background: var(--lg-warning);"></span> Denied (rate-limited — may still have data)</span>
         <span><span class="status-swatch" style="background: var(--lg-border);"></span> Untouched</span>
     </div>
-    <div class="chart-host" id="status-heatmap" style="min-height: 420px;"></div>
+    <div style="overflow-x: auto;">
+        <div class="chart-host" id="status-heatmap" style="min-height: 300px;"></div>
+    </div>
 </section>
 
 <style>
@@ -72,7 +74,7 @@ function renderStatusHeatmap(payload) {
     const codes = payload.status_codes; // {untouched:0, no_data:1, denied:2, fetched:3}
     const colorByCode = {
         [codes.untouched]: resolvedColor('--lg-border'),
-        [codes.no_data]: resolvedColor('--lg-text-3'),
+        [codes.no_data]: resolvedColor('--lg-text-2'),
         [codes.denied]: resolvedColor('--lg-warning'),
         [codes.fetched]: resolvedColor('--lg-success'),
     };
@@ -104,12 +106,21 @@ function renderStatusHeatmap(payload) {
         showscale: false,
         hovertemplate: '%{y}<br>%{x}<extra></extra>',
         xgap: 0,
-        ygap: 3,
+        ygap: 1,
     };
+
+    // Multi-year date ranges (thousands of days) squeezed into a container
+    // a few hundred pixels wide leave each day sub-pixel, which the browser
+    // then blends/aliases into muddy or near-black bands instead of a clean
+    // color. Give each day a real minimum pixel width and let the outer
+    // wrapper scroll horizontally instead of shrinking the plot to fit.
+    const PIXELS_PER_DAY = 3;
+    const plotWidth = Math.max(900, payload.dates.length * PIXELS_PER_DAY);
 
     const layout = {
         margin: { l: 160, r: 16, t: 8, b: 36 },
-        height: Math.max(320, datasets.length * 32 + 80),
+        width: plotWidth,
+        height: Math.max(220, datasets.length * 22 + 60),
         paper_bgcolor: 'transparent',
         plot_bgcolor: 'transparent',
         font: { color: token('--lg-text-2'), size: 12, family: 'IBM Plex Sans, sans-serif' },
@@ -117,7 +128,7 @@ function renderStatusHeatmap(payload) {
         yaxis: { gridcolor: 'transparent', zeroline: false, automargin: true },
     };
 
-    Plotly.react('status-heatmap', [trace], layout, { responsive: true, displaylogo: false });
+    Plotly.react('status-heatmap', [trace], layout, { responsive: false, displaylogo: false });
 }
 
 async function loadDataStatus(source) {
