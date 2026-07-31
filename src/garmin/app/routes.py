@@ -7,10 +7,13 @@ from garmin.dashboard_curated import (
     curated_dashboard_relative_dir,
 )
 from garmin.data_processor.processor import GarminDataProcessor
+import numpy as np
 import pandas as pd
 import os
+import random as _random
 
 QUICK_DASHBOARD_MA_BANDWIDTH_DAYS = 14
+MOCK_MA_BANDWIDTH_DAYS = 21
 
 bp = Blueprint(
     'garmin',
@@ -107,6 +110,219 @@ def _timeseries_records(df: pd.DataFrame) -> list[dict[str, object]]:
         records.append(cleaned)
     return records
 
+def _mock_running_runs() -> pd.DataFrame:
+    """Synthetic per-run records: date, distance, pace, cadence, with a slow improvement trend."""
+    rng = np.random.default_rng(42)
+    weeks = 52
+    today = pd.Timestamp.today().normalize()
+    start = today - pd.Timedelta(weeks=weeks)
+
+    rows = []
+    for week_idx in range(weeks + 1):
+        week_start = start + pd.Timedelta(weeks=week_idx)
+        progress = week_idx / weeks
+        for _ in range(int(rng.integers(2, 5))):
+            run_date = week_start + pd.Timedelta(days=int(rng.integers(0, 7)))
+            if run_date > today:
+                continue
+            pace = max(6.5, 9.4 - 1.0 * progress + rng.normal(0, 0.35))
+            distance = max(1.5, rng.normal(4.5 + 2.5 * progress, 1.4))
+            cadence = 167 + 6 * progress + rng.normal(0, 3)
+            rows.append({
+                'date': run_date,
+                'distance_mi': round(float(distance), 2),
+                'pace_min_per_mile': round(float(pace), 2),
+                'cadence_spm': round(float(cadence), 1),
+            })
+
+    df = pd.DataFrame(rows).sort_values('date').reset_index(drop=True)
+    processor = GarminDataProcessor()
+    ma_columns = ['distance_mi', 'pace_min_per_mile', 'cadence_spm']
+    ma_df = processor.calculate_moving_averages(df, ma_columns, kernels=['gaussian'], bandwidths=[MOCK_MA_BANDWIDTH_DAYS])
+    for col in ma_columns:
+        df[f'{col}_ma'] = ma_df[f'{col}_gaussian_{MOCK_MA_BANDWIDTH_DAYS}']
+    return df
+
+
+def _running_payload() -> dict:
+    df = _mock_running_runs()
+    weekly = (
+        df.set_index('date')
+        .resample('W-MON')
+        .agg(run_count=('distance_mi', 'count'), total_distance_mi=('distance_mi', 'sum'))
+        .reset_index()
+    )
+    return {
+        'runs': _timeseries_records(df),
+        'weekly': _timeseries_records(weekly),
+    }
+
+
+def _mock_lifting_sessions() -> pd.DataFrame:
+    """Synthetic strength sessions: per-exercise top-set weight with a slow progression trend."""
+    rng = np.random.default_rng(7)
+    exercises = ['bench_press', 'squat', 'bicep_curl']
+    base_weights = {'bench_press': 135.0, 'squat': 185.0, 'bicep_curl': 30.0}
+    weeks = 52
+    today = pd.Timestamp.today().normalize()
+    start = today - pd.Timedelta(weeks=weeks)
+
+    rows = []
+    for week_idx in range(weeks + 1):
+        week_start = start + pd.Timedelta(weeks=week_idx)
+        progress = week_idx / weeks
+        for exercise in exercises:
+            for _ in range(int(rng.integers(1, 3))):
+                session_date = week_start + pd.Timedelta(days=int(rng.integers(0, 7)))
+                if session_date > today:
+                    continue
+                base = base_weights[exercise]
+                weight = base * (1 + 0.28 * progress) + rng.normal(0, base * 0.03)
+                rows.append({
+                    'date': session_date,
+                    'exercise': exercise,
+                    'top_weight_lb': round(float(weight), 1),
+                })
+    return pd.DataFrame(rows).sort_values('date').reset_index(drop=True)
+
+
+def _lifting_payload() -> dict:
+    df = _mock_lifting_sessions()
+    processor = GarminDataProcessor()
+    exercises = {}
+    for exercise, group in df.groupby('exercise'):
+        group = group.sort_values('date').reset_index(drop=True)
+        ma_df = processor.calculate_moving_averages(
+            group, ['top_weight_lb'], kernels=['gaussian'], bandwidths=[MOCK_MA_BANDWIDTH_DAYS]
+        )
+        group['top_weight_lb_ma'] = ma_df[f'top_weight_lb_gaussian_{MOCK_MA_BANDWIDTH_DAYS}']
+        exercises[exercise] = _timeseries_records(group[['date', 'top_weight_lb', 'top_weight_lb_ma']])
+
+    weekly_frequency = (
+        df.set_index('date')
+        .groupby([pd.Grouper(freq='W-MON'), 'exercise'])
+        .size()
+        .reset_index(name='sessions')
+    )
+    return {
+        'exercises': exercises,
+        'weekly_frequency': _timeseries_records(weekly_frequency),
+    }
+
+
+def _mock_activities() -> pd.DataFrame:
+    """Synthetic multi-sport activity log used for the Activities overview and recent-activities list."""
+    rng = np.random.default_rng(99)
+    weeks = 26
+    today = pd.Timestamp.today().normalize()
+    start = today - pd.Timedelta(weeks=weeks)
+
+    activity_types = ['running', 'cycling', 'climbing', 'lifting', 'swimming']
+    has_distance = {'running', 'cycling', 'swimming'}
+    avg_duration_min = {'running': 45, 'cycling': 75, 'climbing': 90, 'lifting': 55, 'swimming': 40}
+    avg_distance_mi = {'running': 4.5, 'cycling': 15.0, 'swimming': 1.2}
+
+    rows = []
+    for week_idx in range(weeks):
+        week_start = start + pd.Timedelta(weeks=week_idx)
+        for activity_type in activity_types:
+            count = int(rng.integers(1, 4)) if activity_type == 'lifting' else int(rng.integers(0, 3))
+            for _ in range(count):
+                activity_date = week_start + pd.Timedelta(days=int(rng.integers(0, 7)))
+                if activity_date > today:
+                    continue
+                duration = max(15.0, rng.normal(avg_duration_min[activity_type], avg_duration_min[activity_type] * 0.25))
+                distance = None
+                if activity_type in has_distance:
+                    distance = max(0.5, rng.normal(avg_distance_mi[activity_type], avg_distance_mi[activity_type] * 0.3))
+                rows.append({
+                    'date': activity_date,
+                    'type': activity_type,
+                    'duration_min': round(float(duration), 1),
+                    'distance_mi': round(float(distance), 2) if distance is not None else None,
+                })
+    return pd.DataFrame(rows).sort_values('date').reset_index(drop=True)
+
+
+def _activities_overview_payload() -> dict:
+    df = _mock_activities()
+
+    weekly_by_type = (
+        df.set_index('date')
+        .groupby([pd.Grouper(freq='W-MON'), 'type'])
+        .size()
+        .reset_index(name='count')
+    )
+    weekly_totals = (
+        df.set_index('date')
+        .resample('W-MON')
+        .agg(total_count=('type', 'size'), total_distance_mi=('distance_mi', 'sum'))
+        .reset_index()
+    )
+    weekly_totals['total_hours'] = (
+        df.set_index('date').resample('W-MON')['duration_min'].sum() / 60
+    ).round(1).values
+
+    recent = df.sort_values('date', ascending=False).head(15)
+
+    return {
+        'activity_types': sorted(df['type'].unique().tolist()),
+        'weekly_by_type': _timeseries_records(weekly_by_type),
+        'weekly_totals': _timeseries_records(weekly_totals),
+        'recent_activities': _timeseries_records(recent),
+        'kpis': {
+            'total_activities': int(len(df)),
+            'total_distance_mi': round(float(df['distance_mi'].sum(skipna=True)), 1),
+            'total_hours': round(float(df['duration_min'].sum() / 60), 1),
+        },
+    }
+
+
+def _mock_activity_detail() -> dict:
+    """A single synthetic cycling activity, for the 'precision dive' drill-in view."""
+    rng = np.random.default_rng(123)
+    duration_s = 60 * 62
+    t = np.arange(0, duration_s, 5)
+    n = len(t)
+
+    speed = np.clip(16 + 6 * np.sin(t / 900) + rng.normal(0, 1.2, n), 3, 34)
+    power = np.clip(150 + 60 * np.sin(t / 700 + 0.5) + rng.normal(0, 15, n), 0, 420)
+    cadence = np.clip(82 + 8 * np.sin(t / 800) + rng.normal(0, 4, n), 0, 110)
+    heart_rate = np.clip(130 + 25 * np.sin(t / 850 + 1.0) + rng.normal(0, 4, n), 95, 178)
+
+    zone_labels = ['Z1 Recovery', 'Z2 Endurance', 'Z3 Tempo', 'Z4 Threshold', 'Z5 VO2max']
+    zone_bounds = [0, 114, 133, 152, 171, 999]
+    zone_minutes = [
+        round(float(np.sum((heart_rate >= zone_bounds[i]) & (heart_rate < zone_bounds[i + 1])) * 5 / 60), 1)
+        for i in range(len(zone_labels))
+    ]
+
+    return {
+        'activity': {
+            'type': 'cycling',
+            'name': 'Example Ride (sample data)',
+            'date': pd.Timestamp.today().date().isoformat(),
+            'duration_min': round(duration_s / 60, 1),
+            'distance_mi': round(float(np.trapz(speed, dx=5) / 3600), 1),
+        },
+        'time_s': t.tolist(),
+        'speed_mph': np.round(speed, 1).tolist(),
+        'power_w': np.round(power, 0).tolist(),
+        'cadence_rpm': np.round(cadence, 0).tolist(),
+        'heart_rate_bpm': np.round(heart_rate, 0).tolist(),
+        'zones': {'labels': zone_labels, 'minutes': zone_minutes},
+    }
+
+
+RECOMMENDATION_POOL = [
+    {'type': 'Easy Run', 'detail': 'Zone 2, 35-40 min. Recovery emphasis after a higher-load stretch.'},
+    {'type': 'Interval Ride', 'detail': '5x4min near threshold, 3min easy spin between reps.'},
+    {'type': 'Rest Day', 'detail': 'Recent training load looks elevated relative to your usual pattern.'},
+    {'type': 'Long Run', 'detail': '75-90 min conversational pace to build aerobic volume.'},
+    {'type': 'Strength Session', 'detail': 'Lower-body focus — squat and hinge patterns due for progression.'},
+]
+
+
 @bp.route('/')
 def index():
     # Redirect /garmin to /garmin/metrics_dashboard
@@ -169,7 +385,7 @@ def quick_dashboard():
     source = request.args.get('source', 'local')
     if source not in {'local', 's3'}:
         source = 'local'
-    return render_template('quick_dashboard.html', source=source)
+    return render_template('quick_dashboard.html', source=source, active_section='health')
 
 
 @bp.route('/api/quick_dashboard_data')
@@ -190,3 +406,76 @@ def quick_dashboard_data():
         print(f"Error loading dashboard data: {e}")
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/fitness')
+def fitness():
+    return render_template('fitness.html', active_section='fitness')
+
+
+@bp.route('/api/fitness_data')
+def api_fitness_data():
+    import traceback
+
+    sport = request.args.get('sport', 'running')
+    try:
+        if sport == 'running':
+            payload = _running_payload()
+        elif sport == 'lifting':
+            payload = _lifting_payload()
+        else:
+            return jsonify({'sport': sport, 'mock': True, 'available': False})
+        payload.update({'sport': sport, 'mock': True, 'available': True})
+        return jsonify(payload)
+    except Exception as e:
+        print(f"Error loading fitness data: {e}")
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/activities')
+def activities():
+    return render_template('activities.html', active_section='activities')
+
+
+@bp.route('/api/activities_overview_data')
+def api_activities_overview_data():
+    import traceback
+
+    try:
+        payload = _activities_overview_payload()
+        payload['mock'] = True
+        return jsonify(payload)
+    except Exception as e:
+        print(f"Error loading activities overview data: {e}")
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/api/activity_detail_data')
+def api_activity_detail_data():
+    import traceback
+
+    try:
+        payload = _mock_activity_detail()
+        payload['mock'] = True
+        return jsonify(payload)
+    except Exception as e:
+        print(f"Error loading activity detail data: {e}")
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/analytics')
+def analytics():
+    return render_template('analytics.html', active_section='analytics')
+
+
+@bp.route('/api/recommend')
+def api_recommend():
+    suggestion = _random.choice(RECOMMENDATION_POOL)
+    return jsonify({
+        'mock': True,
+        'suggestion': suggestion,
+        'note': 'Placeholder logic — real suggestions will draw on training load, recovery, and sleep once that modeling exists.',
+    })

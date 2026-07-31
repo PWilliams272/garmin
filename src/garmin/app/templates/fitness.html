@@ -1,0 +1,237 @@
+{% extends "base.html" %}
+{% block title %}Fitness — Garmin{% endblock %}
+{% block subtitle %}Performance trends by sport{% endblock %}
+{% block head %}
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+{% endblock %}
+{% block content %}
+<nav class="tab-bar tab-bar-sub" id="sport-tabs" role="tablist" aria-label="Sport">
+    <button type="button" class="tab-button active" data-sport="running" role="tab" aria-selected="true">Running</button>
+    <button type="button" class="tab-button" data-sport="climbing" role="tab" aria-selected="false">Climbing</button>
+    <button type="button" class="tab-button" data-sport="biking" role="tab" aria-selected="false">Biking</button>
+    <button type="button" class="tab-button" data-sport="lifting" role="tab" aria-selected="false">Lifting</button>
+    <button type="button" class="tab-button" data-sport="swimming" role="tab" aria-selected="false">Swimming</button>
+</nav>
+
+<div class="tab-pane active" id="pane-running">
+    <div style="display: flex; align-items: center; gap: 10px;">
+        <span class="mock-badge">Mock data</span>
+        <span class="status-line">Synthetic example — replace once real activity data is flowing.</span>
+    </div>
+    <section class="kpi-grid">
+        <div class="card kpi-card">
+            <div class="kpi-label">Latest Pace</div>
+            <div class="kpi-value" id="kpi-run-pace">—</div>
+        </div>
+        <div class="card kpi-card">
+            <div class="kpi-label">Latest Cadence</div>
+            <div class="kpi-value" id="kpi-run-cadence">—</div>
+        </div>
+        <div class="card kpi-card">
+            <div class="kpi-label">This Week's Distance</div>
+            <div class="kpi-value" id="kpi-run-distance">—</div>
+        </div>
+        <div class="card kpi-card">
+            <div class="kpi-label">Runs This Week</div>
+            <div class="kpi-value" id="kpi-run-count">—</div>
+        </div>
+    </section>
+    <section class="chart-grid">
+        <div class="card chart-card">
+            <div class="section-heading">Pace</div>
+            <div class="chart-host" id="run-pace-chart"></div>
+        </div>
+        <div class="card chart-card">
+            <div class="section-heading">Cadence</div>
+            <div class="chart-host" id="run-cadence-chart"></div>
+        </div>
+        <div class="card chart-card">
+            <div class="section-heading">Weekly Distance</div>
+            <div class="chart-host" id="run-weekly-distance-chart"></div>
+        </div>
+        <div class="card chart-card">
+            <div class="section-heading">Runs per Week</div>
+            <div class="chart-host" id="run-weekly-count-chart"></div>
+        </div>
+    </section>
+</div>
+
+<div class="tab-pane" id="pane-lifting">
+    <div style="display: flex; align-items: center; gap: 10px;">
+        <span class="mock-badge">Mock data</span>
+        <span class="status-line">Synthetic example — replace once real activity data is flowing.</span>
+    </div>
+    <section class="kpi-grid">
+        <div class="card kpi-card">
+            <div class="kpi-label">Bench Press (top set)</div>
+            <div class="kpi-value" id="kpi-lift-bench">—</div>
+        </div>
+        <div class="card kpi-card">
+            <div class="kpi-label">Squat (top set)</div>
+            <div class="kpi-value" id="kpi-lift-squat">—</div>
+        </div>
+        <div class="card kpi-card">
+            <div class="kpi-label">Bicep Curl (top set)</div>
+            <div class="kpi-value" id="kpi-lift-curl">—</div>
+        </div>
+    </section>
+    <section class="chart-grid">
+        <div class="card chart-card chart-card-wide">
+            <div class="section-heading">Top Set Weight Progression</div>
+            <div class="chart-host" id="lift-weight-chart"></div>
+        </div>
+        <div class="card chart-card chart-card-wide">
+            <div class="section-heading">Sessions per Week by Exercise</div>
+            <div class="chart-host" id="lift-frequency-chart"></div>
+        </div>
+    </section>
+</div>
+
+<div class="tab-pane" id="pane-climbing">
+    <div class="card placeholder-card">
+        <div class="placeholder-title">Climbing — Coming Soon</div>
+        <div class="placeholder-note">No climbing data is flowing yet. Once it is, expect grade progression, sessions/week, and send-rate trends here.</div>
+    </div>
+</div>
+
+<div class="tab-pane" id="pane-biking">
+    <div class="card placeholder-card">
+        <div class="placeholder-title">Biking — Coming Soon</div>
+        <div class="placeholder-note">No cycling data is flowing yet. Once it is, expect power/pace trends, weekly distance, and elevation gain here.</div>
+    </div>
+</div>
+
+<div class="tab-pane" id="pane-swimming">
+    <div class="card placeholder-card">
+        <div class="placeholder-title">Swimming — Coming Soon</div>
+        <div class="placeholder-note">No swim data is flowing yet. Once it is, expect pace/100m, weekly distance, and stroke-rate trends here.</div>
+    </div>
+</div>
+
+<script>
+function token(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+const loadedSports = new Set();
+
+document.getElementById('sport-tabs').addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-sport]');
+    if (!button) return;
+    const sport = button.dataset.sport;
+
+    document.querySelectorAll('#sport-tabs button').forEach((b) => {
+        b.classList.remove('active');
+        b.setAttribute('aria-selected', 'false');
+    });
+    button.classList.add('active');
+    button.setAttribute('aria-selected', 'true');
+
+    document.querySelectorAll('.tab-pane').forEach((pane) => pane.classList.remove('active'));
+    document.getElementById('pane-' + sport).classList.add('active');
+
+    if ((sport === 'running' || sport === 'lifting') && !loadedSports.has(sport)) {
+        loadedSports.add(sport);
+        loadSport(sport);
+    }
+});
+
+async function loadSport(sport) {
+    try {
+        const response = await fetch('/api/fitness_data?sport=' + encodeURIComponent(sport));
+        const payload = await response.json();
+        if (payload.error) throw new Error(payload.error);
+        if (sport === 'running') renderRunning(payload);
+        if (sport === 'lifting') renderLifting(payload);
+    } catch (error) {
+        console.error('Failed to load ' + sport + ' data', error);
+    }
+}
+
+function baseLayout(yTitle, extra) {
+    return Object.assign({
+        margin: { l: 56, r: 16, t: 8, b: 36 },
+        paper_bgcolor: 'transparent',
+        plot_bgcolor: 'transparent',
+        font: { color: token('--lg-text-2'), size: 12, family: 'IBM Plex Sans, sans-serif' },
+        xaxis: { gridcolor: token('--lg-border'), zeroline: false },
+        yaxis: { gridcolor: token('--lg-border'), zeroline: false, title: { text: yTitle, font: { size: 11 } } },
+        showlegend: false,
+    }, extra || {});
+}
+
+function renderRunning(payload) {
+    const runs = payload.runs;
+    const weekly = payload.weekly;
+    if (!runs.length) return;
+
+    const last = runs[runs.length - 1];
+    document.getElementById('kpi-run-pace').textContent = last.pace_min_per_mile.toFixed(2) + ' /mi';
+    document.getElementById('kpi-run-cadence').textContent = Math.round(last.cadence_spm) + ' spm';
+    const lastWeek = weekly[weekly.length - 1];
+    document.getElementById('kpi-run-distance').textContent = lastWeek.total_distance_mi.toFixed(1) + ' mi';
+    document.getElementById('kpi-run-count').textContent = lastWeek.run_count;
+
+    const color = token('--lg-gold');
+    Plotly.newPlot('run-pace-chart', [
+        { x: runs.map(r => r.date), y: runs.map(r => r.pace_min_per_mile), type: 'scatter', mode: 'markers', marker: { color, size: 4, opacity: 0.35 } },
+        { x: runs.map(r => r.date), y: runs.map(r => r.pace_min_per_mile_ma), type: 'scatter', mode: 'lines', line: { color, width: 2.5 } },
+    ], baseLayout('min/mi', { yaxis: { gridcolor: token('--lg-border'), zeroline: false, autorange: 'reversed', title: { text: 'min/mi', font: { size: 11 } } } }), { responsive: true, displaylogo: false });
+
+    const cadenceColor = token('--lg-highlight');
+    Plotly.newPlot('run-cadence-chart', [
+        { x: runs.map(r => r.date), y: runs.map(r => r.cadence_spm), type: 'scatter', mode: 'markers', marker: { color: cadenceColor, size: 4, opacity: 0.35 } },
+        { x: runs.map(r => r.date), y: runs.map(r => r.cadence_spm_ma), type: 'scatter', mode: 'lines', line: { color: cadenceColor, width: 2.5 } },
+    ], baseLayout('steps/min'), { responsive: true, displaylogo: false });
+
+    const distColor = token('--lg-success');
+    Plotly.newPlot('run-weekly-distance-chart', [
+        { x: weekly.map(w => w.date), y: weekly.map(w => w.total_distance_mi), type: 'bar', marker: { color: distColor } },
+    ], baseLayout('mi'), { responsive: true, displaylogo: false });
+
+    const countColor = token('--lg-info');
+    Plotly.newPlot('run-weekly-count-chart', [
+        { x: weekly.map(w => w.date), y: weekly.map(w => w.run_count), type: 'bar', marker: { color: countColor } },
+    ], baseLayout('runs'), { responsive: true, displaylogo: false });
+}
+
+function renderLifting(payload) {
+    const exercises = payload.exercises;
+    const exerciseMeta = {
+        bench_press: { label: 'Bench Press', colorToken: '--lg-gold', kpiId: 'kpi-lift-bench' },
+        squat: { label: 'Squat', colorToken: '--lg-highlight', kpiId: 'kpi-lift-squat' },
+        bicep_curl: { label: 'Bicep Curl', colorToken: '--lg-success', kpiId: 'kpi-lift-curl' },
+    };
+
+    const traces = [];
+    Object.entries(exerciseMeta).forEach(([key, meta]) => {
+        const rows = exercises[key] || [];
+        if (!rows.length) return;
+        const color = token(meta.colorToken);
+        const last = rows[rows.length - 1];
+        document.getElementById(meta.kpiId).textContent = Math.round(last.top_weight_lb) + ' lb';
+        traces.push({ x: rows.map(r => r.date), y: rows.map(r => r.top_weight_lb), type: 'scatter', mode: 'markers', marker: { color, size: 4, opacity: 0.3 }, name: meta.label, showlegend: false });
+        traces.push({ x: rows.map(r => r.date), y: rows.map(r => r.top_weight_lb_ma), type: 'scatter', mode: 'lines', line: { color, width: 2.5 }, name: meta.label, showlegend: true });
+    });
+
+    Plotly.newPlot('lift-weight-chart', traces, baseLayout('lb', { showlegend: true, legend: { orientation: 'h', y: -0.2 } }), { responsive: true, displaylogo: false });
+
+    const freq = payload.weekly_frequency;
+    const weeks = [...new Set(freq.map(r => r.date))].sort();
+    const freqTraces = Object.entries(exerciseMeta).map(([key, meta]) => {
+        const byWeek = Object.fromEntries(freq.filter(r => r.exercise === key).map(r => [r.date, r.sessions]));
+        return {
+            x: weeks,
+            y: weeks.map(w => byWeek[w] || 0),
+            type: 'bar',
+            name: meta.label,
+            marker: { color: token(meta.colorToken) },
+        };
+    });
+    Plotly.newPlot('lift-frequency-chart', freqTraces, baseLayout('sessions', { barmode: 'stack', showlegend: true, legend: { orientation: 'h', y: -0.2 } }), { responsive: true, displaylogo: false });
+}
+
+loadSport('running');
+loadedSports.add('running');
+</script>
+{% endblock %}

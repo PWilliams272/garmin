@@ -1,17 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Garmin Dashboard{% endblock %}
+{% block subtitle %}Daily heart rate, steps, and weight — points are raw readings, lines are the 14-day gaussian moving average{% endblock %}
 {% block head %}
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 {% endblock %}
 {% block content %}
-<div class="main-shell">
-    <header class="topbar">
-        <div class="brand-block">
-            <h1>Garmin<span style="color: var(--lg-gold);">.</span></h1>
-            <div class="brand-subtitle">Daily heart rate, steps, and weight — points are raw readings, lines are the 14-day gaussian moving average</div>
-        </div>
-    </header>
-
     <div class="dashboard-layout">
         <aside class="dashboard-sidebar">
             <section class="card chart-card">
@@ -102,7 +95,6 @@
             </div>
         </aside>
     </div>
-</div>
 
 <script>
 function token(name) {

@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Analytics — Garmin{% endblock %}
+{% block subtitle %}Deeper analysis and predictive modeling built on the curated data above{% endblock %}
+{% block content %}
+<section class="chart-grid">
+    <div class="card chart-card">
+        <div class="section-heading" style="display: flex; justify-content: space-between; align-items: baseline;">
+            <span>Workout Recommender</span>
+            <span class="mock-badge">Mock logic</span>
+        </div>
+        <p class="muted-copy" style="margin-bottom: 12px;">Given your recent training load, sleep, and recovery, here's a suggestion for today.</p>
+        <button type="button" id="get-suggestion" class="ghost-button">Get Today's Suggestion</button>
+        <div id="suggestion-result" style="margin-top: 14px; display: none;">
+            <div class="kpi-value" id="suggestion-type" style="font-size: 20px;"></div>
+            <p class="muted-copy" id="suggestion-detail" style="margin-top: 6px;"></p>
+            <p class="status-line" id="suggestion-note" style="margin-top: 10px;"></p>
+        </div>
+    </div>
+
+    <div class="card placeholder-card">
+        <div class="placeholder-title">Sleep Quality vs. Performance — Coming Soon</div>
+        <div class="placeholder-note">Once activity data is flowing, this will look at whether sleep quality/duration is causally linked to next-day performance (pace, power, RPE) rather than just correlated with it.</div>
+    </div>
+
+    <div class="card placeholder-card">
+        <div class="placeholder-title">Performance Prediction — Coming Soon</div>
+        <div class="placeholder-note">Model expected race pace / power output from recent training load, once there's enough real training history to fit against.</div>
+    </div>
+
+    <div class="card placeholder-card">
+        <div class="placeholder-title">Training Load &amp; Recovery — Coming Soon</div>
+        <div class="placeholder-note">Acute:chronic training load ratio and recovery trend, once activity and HRV data are both flowing consistently.</div>
+    </div>
+</section>
+
+<script>
+document.getElementById('get-suggestion').addEventListener('click', async () => {
+    const button = document.getElementById('get-suggestion');
+    button.disabled = true;
+    try {
+        const response = await fetch('/api/recommend');
+        const payload = await response.json();
+        document.getElementById('suggestion-type').textContent = payload.suggestion.type;
+        document.getElementById('suggestion-detail').textContent = payload.suggestion.detail;
+        document.getElementById('suggestion-note').textContent = payload.note;
+        document.getElementById('suggestion-result').style.display = '';
+    } catch (error) {
+        console.error('Failed to get suggestion', error);
+    } finally {
+        button.disabled = false;
+    }
+});
+</script>
+{% endblock %}

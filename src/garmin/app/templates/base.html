@@ -22,6 +22,20 @@
     {% block head %}{% endblock %}
 </head>
 <body>
+<div class="main-shell">
+    <header class="topbar">
+        <div class="brand-block">
+            <h1>Garmin<span style="color: var(--lg-gold);">.</span></h1>
+            <div class="brand-subtitle">{% block subtitle %}Health, fitness, and activity data in one place{% endblock %}</div>
+        </div>
+    </header>
+    <nav class="tab-bar" role="tablist" aria-label="Sections">
+        <a href="{{ url_for('garmin.quick_dashboard') }}" class="tab-button{% if active_section == 'health' %} active{% endif %}" role="tab" aria-selected="{{ 'true' if active_section == 'health' else 'false' }}">Health</a>
+        <a href="{{ url_for('garmin.fitness') }}" class="tab-button{% if active_section == 'fitness' %} active{% endif %}" role="tab" aria-selected="{{ 'true' if active_section == 'fitness' else 'false' }}">Fitness</a>
+        <a href="{{ url_for('garmin.activities') }}" class="tab-button{% if active_section == 'activities' %} active{% endif %}" role="tab" aria-selected="{{ 'true' if active_section == 'activities' else 'false' }}">Activities</a>
+        <a href="{{ url_for('garmin.analytics') }}" class="tab-button{% if active_section == 'analytics' %} active{% endif %}" role="tab" aria-selected="{{ 'true' if active_section == 'analytics' else 'false' }}">Analytics</a>
+    </nav>
     {% block content %}{% endblock %}
+</div>
 </body>
 </html>

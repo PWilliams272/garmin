@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+{% block title %}Activities — Garmin{% endblock %}
+{% block subtitle %}Everything you've logged, and a drill-in view for a single activity{% endblock %}
+{% block head %}
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+{% endblock %}
+{% block content %}
+<div style="display: flex; align-items: center; gap: 10px;">
+    <span class="mock-badge">Mock data</span>
+    <span class="status-line">Synthetic example — replace once real activity data is flowing.</span>
+</div>
+
+<section class="kpi-grid">
+    <div class="card kpi-card">
+        <div class="kpi-label">Total Activities (26wk)</div>
+        <div class="kpi-value" id="kpi-total-activities">—</div>
+    </div>
+    <div class="card kpi-card">
+        <div class="kpi-label">Total Distance</div>
+        <div class="kpi-value" id="kpi-total-distance">—</div>
+    </div>
+    <div class="card kpi-card">
+        <div class="kpi-label">Total Hours</div>
+        <div class="kpi-value" id="kpi-total-hours">—</div>
+    </div>
+</section>
+
+<section class="chart-grid">
+    <div class="card chart-card chart-card-wide">
+        <div class="section-heading">Activities per Week, by Type</div>
+        <div class="chart-host" id="weekly-type-chart"></div>
+    </div>
+    <div class="card chart-card">
+        <div class="section-heading">Weekly Distance</div>
+        <div class="chart-host" id="weekly-distance-chart"></div>
+    </div>
+    <div class="card chart-card">
+        <div class="section-heading">Weekly Hours</div>
+        <div class="chart-host" id="weekly-hours-chart"></div>
+    </div>
+</section>
+
+<section class="card chart-card">
+    <div class="section-heading">Recent Activities</div>
+    <div class="table-scroll">
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Type</th>
+                    <th class="num">Duration</th>
+                    <th class="num">Distance</th>
+                </tr>
+            </thead>
+            <tbody id="recent-activities-body">
+                <tr><td colspan="4" class="status-line">Loading…</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <div class="status-line" style="margin-top: 10px;">Click a row once real per-activity drill-in is wired up — for now, the sample dive below always shows the same example ride.</div>
+</section>
+
+<section class="card chart-card">
+    <div class="section-heading" style="display: flex; justify-content: space-between; align-items: baseline;">
+        <span id="detail-activity-name">Sample Activity Detail</span>
+        <span class="status-line" id="detail-activity-meta"></span>
+    </div>
+
+    <div class="map-placeholder">Route map (GPS data not yet available — will render here once activity data is flowing)</div>
+
+    <section class="chart-grid" style="margin-top: 16px;">
+        <div class="card chart-card">
+            <div class="section-heading">Speed</div>
+            <div class="chart-host" id="detail-speed-chart"></div>
+        </div>
+        <div class="card chart-card">
+            <div class="section-heading">Power</div>
+            <div class="chart-host" id="detail-power-chart"></div>
+        </div>
+        <div class="card chart-card">
+            <div class="section-heading">Cadence</div>
+            <div class="chart-host" id="detail-cadence-chart"></div>
+        </div>
+        <div class="card chart-card">
+            <div class="section-heading">Time in Heart Rate Zone</div>
+            <div class="chart-host" id="detail-zones-chart"></div>
+        </div>
+    </section>
+</section>
+
+<script>
+function token(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+function baseLayout(yTitle, extra) {
+    return Object.assign({
+        margin: { l: 56, r: 16, t: 8, b: 36 },
+        paper_bgcolor: 'transparent',
+        plot_bgcolor: 'transparent',
+        font: { color: token('--lg-text-2'), size: 12, family: 'IBM Plex Sans, sans-serif' },
+        xaxis: { gridcolor: token('--lg-border'), zeroline: false },
+        yaxis: { gridcolor: token('--lg-border'), zeroline: false, title: { text: yTitle, font: { size: 11 } } },
+        showlegend: false,
+    }, extra || {});
+}
+
+const TYPE_COLORS = {
+    running: '--lg-gold',
+    cycling: '--lg-highlight',
+    climbing: '--lg-danger',
+    lifting: '--lg-success',
+    swimming: '--lg-info',
+};
+
+async function loadOverview() {
+    const response = await fetch('/api/activities_overview_data');
+    const payload = await response.json();
+    if (payload.error) throw new Error(payload.error);
+
+    document.getElementById('kpi-total-activities').textContent = payload.kpis.total_activities;
+    document.getElementById('kpi-total-distance').textContent = payload.kpis.total_distance_mi.toFixed(0) + ' mi';
+    document.getElementById('kpi-total-hours').textContent = payload.kpis.total_hours.toFixed(0) + ' hr';
+
+    const weeks = [...new Set(payload.weekly_by_type.map(r => r.date))].sort();
+    const typeTraces = payload.activity_types.map((type) => {
+        const byWeek = Object.fromEntries(payload.weekly_by_type.filter(r => r.type === type).map(r => [r.date, r.count]));
+        return {
+            x: weeks,
+            y: weeks.map(w => byWeek[w] || 0),
+            type: 'bar',
+            name: type,
+            marker: { color: token(TYPE_COLORS[type] || '--lg-gold') },
+        };
+    });
+    Plotly.newPlot('weekly-type-chart', typeTraces, baseLayout('activities', { barmode: 'stack', showlegend: true, legend: { orientation: 'h', y: -0.2 } }), { responsive: true, displaylogo: false });
+
+    const totals = payload.weekly_totals;
+    Plotly.newPlot('weekly-distance-chart', [
+        { x: totals.map(r => r.date), y: totals.map(r => r.total_distance_mi), type: 'bar', marker: { color: token('--lg-gold') } },
+    ], baseLayout('mi'), { responsive: true, displaylogo: false });
+
+    Plotly.newPlot('weekly-hours-chart', [
+        { x: totals.map(r => r.date), y: totals.map(r => r.total_hours), type: 'bar', marker: { color: token('--lg-highlight') } },
+    ], baseLayout('hours'), { responsive: true, displaylogo: false });
+
+    const tbody = document.getElementById('recent-activities-body');
+    tbody.innerHTML = '';
+    payload.recent_activities.forEach((activity) => {
+        const row = document.createElement('tr');
+        const distance = activity.distance_mi === null ? '—' : activity.distance_mi.toFixed(1) + ' mi';
+        row.innerHTML = `<td>${activity.date}</td><td>${activity.type}</td><td class="num">${activity.duration_min.toFixed(0)} min</td><td class="num">${distance}</td>`;
+        tbody.appendChild(row);
+    });
+}
+
+async function loadDetail() {
+    const response = await fetch('/api/activity_detail_data');
+    const payload = await response.json();
+    if (payload.error) throw new Error(payload.error);
+
+    document.getElementById('detail-activity-name').textContent = payload.activity.name;
+    document.getElementById('detail-activity-meta').textContent =
+        payload.activity.date + ' — ' + payload.activity.duration_min.toFixed(0) + ' min, ' + payload.activity.distance_mi.toFixed(1) + ' mi';
+
+    const x = payload.time_s.map(s => (s / 60).toFixed(1));
+
+    Plotly.newPlot('detail-speed-chart', [
+        { x, y: payload.speed_mph, type: 'scatter', mode: 'lines', line: { color: token('--lg-gold'), width: 1.5 } },
+    ], baseLayout('mph', { xaxis: { gridcolor: token('--lg-border'), zeroline: false, title: { text: 'min', font: { size: 11 } } } }), { responsive: true, displaylogo: false });
+
+    Plotly.newPlot('detail-power-chart', [
+        { x, y: payload.power_w, type: 'scatter', mode: 'lines', line: { color: token('--lg-highlight'), width: 1.5 } },
+    ], baseLayout('watts', { xaxis: { gridcolor: token('--lg-border'), zeroline: false, title: { text: 'min', font: { size: 11 } } } }), { responsive: true, displaylogo: false });
+
+    Plotly.newPlot('detail-cadence-chart', [
+        { x, y: payload.cadence_rpm, type: 'scatter', mode: 'lines', line: { color: token('--lg-success'), width: 1.5 } },
+    ], baseLayout('rpm', { xaxis: { gridcolor: token('--lg-border'), zeroline: false, title: { text: 'min', font: { size: 11 } } } }), { responsive: true, displaylogo: false });
+
+    Plotly.newPlot('detail-zones-chart', [
+        { x: payload.zones.labels, y: payload.zones.minutes, type: 'bar', marker: { color: token('--lg-info') } },
+    ], baseLayout('minutes'), { responsive: true, displaylogo: false });
+}
+
+loadOverview().catch((error) => console.error('Failed to load activities overview', error));
+loadDetail().catch((error) => console.error('Failed to load activity detail', error));
+</script>
+{% endblock %}
