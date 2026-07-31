@@ -206,10 +206,15 @@ function updateKpi(config, points) {
 // run offline by manual_analyze_metrics.py -- nothing here is fit on request).
 // Optional `overlays` render as points + trend-line-only (no bands, to keep a
 // multi-axis chart legible) on their own free right-side y-axis.
+// Set to true to bring the GP trend back into the comparison view. GP
+// computation/storage is untouched either way (garmin.analysis.trend_gp,
+// still run by manual_analyze_metrics.py) -- this only controls rendering.
+const SHOW_GP_TREND = false;
+
 function renderAnalyzedChart(config, anchorDate) {
     const entry = (chartState.analyzed && chartState.analyzed[config.metricKey]) || { points: [], trend_gp: [], trend_sts: [] };
     const allPoints = entry.points || [];
-    const gpTrend = filterByRange(entry.trend_gp || [], anchorDate);
+    const gpTrend = SHOW_GP_TREND ? filterByRange(entry.trend_gp || [], anchorDate) : [];
     const stsTrend = filterByRange(entry.trend_sts || [], anchorDate);
 
     const visiblePoints = filterByRange(allPoints, anchorDate).filter((p) => p.quality_tier !== 'hard');
@@ -257,12 +262,31 @@ function renderAnalyzedChart(config, anchorDate) {
         traces.push({ x: stsTrend.map(t => t.date), y: stsTrend.map(t => t.mean), type: 'scatter', mode: 'lines', line: { color: stsColor, width: 2.5 }, name: 'Structural TS trend', showlegend: true });
     }
 
+    // Autoscale the y-axis from normal points + trend bands only -- "uncertain"
+    // (soft-tier) points still render above, but shouldn't be allowed to blow
+    // out the visible range the way an unfiltered autorange would.
+    const rangeValues = [];
+    normalPoints.forEach(p => { const v = p[config.metricKey]; if (v !== null && v !== undefined) rangeValues.push(v); });
+    (gpTrend.length ? gpTrend : []).forEach(t => { rangeValues.push(t.upper_95, t.lower_95); });
+    stsTrend.forEach(t => { rangeValues.push(t.upper_95, t.lower_95); });
+    let yaxisRange;
+    if (rangeValues.length) {
+        const dataMin = Math.min(...rangeValues);
+        const dataMax = Math.max(...rangeValues);
+        const pad = (dataMax - dataMin) * 0.08 || Math.abs(dataMax) * 0.05 || 1;
+        yaxisRange = [dataMin - pad, dataMax + pad];
+    }
+
     const overlaysChecked = (config.overlays || []).filter((o) => document.getElementById(o.checkboxId).checked);
     const layout = baseLayout(config.yAxisTitle, {
         margin: { l: 60, r: overlaysChecked.length ? 24 : 16, t: 8, b: 36 },
         showlegend: true,
         legend: { orientation: 'h', y: -0.2 },
     });
+    if (yaxisRange) {
+        layout.yaxis.range = yaxisRange;
+        layout.yaxis.autorange = false;
+    }
 
     if (overlaysChecked.length > 0) {
         const axisGap = 0.12;
