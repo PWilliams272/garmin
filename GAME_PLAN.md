@@ -14,15 +14,15 @@ Complements `GARMIN_HANDOFF.md` (AWS/ops reference) and `CLAUDE.md` (architectur
 
 See `GARMIN_HANDOFF.md` for the verified live state: the Lambda's 128MB→512MB timeout fix is deployed and verified, a state-leak bug in the detailed puller is fixed, and detailed timing logs are live. Remaining work: keep monitoring scheduled runs, watch for real auth failures vs. infra timing, and continue packaging cleanup. The 8 curated datasets (`health_stats`, `steps`, `sleep`, `stress`, `body_battery`, `heart_rate`, `hrv`, `respiration`) are confirmed actively updating daily as of 2026-07-29.
 
-## Goal 2 — Workouts/Activities: Confirmed Genuinely Unstarted
+## Goal 2 — Workouts/Activities: Running + Strength Done, Multi-Sport In Progress
 
-Checked directly: `src/garmin/pullers/activities.py` exists but is a 20-line skeleton (`ActivityPuller` with `pull_list()` and `get_strength_workout()` — the latter only handles strength-training exercise sets, not general cardio/GPS-based activities like runs or rides). It's **explicitly disabled** — `src/garmin/updaters.py` has `#self.activity_puller = activity_puller or ActivityPuller(session)` commented out. It's not wired into `update_all()`, not in the curated S3 output, nothing downstream consumes it.
+**Running and strength training are done**, end to end: `ActivityPuller` pulls both from Garmin, `curated_store.py` has a dedicated `curated/activities/summary|detail/` shape (one row per activity + a per-activity detail table for strength sets), wired into `DataUpdater.update_all()`, with GP-trend analysis for running metrics and a real (non-mock) Fitness tab. 1062 runs and 490 strength sessions are backfilled locally as of 2026-07-31.
 
-To actually build this out:
-- Decide scope: which activity types matter first (running/cycling with GPS+pace+splits, strength sets, or both)? The existing `get_strength_workout` only covers one of these.
-- Design the curated schema for activities (likely its own `curated/activities/` prefix, probably one row per activity plus a detail table for splits/sets, following the existing `curated/daily/` + `curated/detailed/<dataset>/` pattern already established for other data types — don't invent a third storage shape).
-- Wire it into `DataUpdater.update_all()` once built, following the same pattern as the other curated updaters in `src/garmin/updaters.py`.
-- Alongside adding activities: the existing handoff already flags legacy DB-backed paths and legacy S3 prefixes (`processed/`, `moving_averages/`, `dashboards/`) as due for intentional retirement — worth doing this cleanup while touching the same code, not as a separate later pass.
+**Still open** (actively being worked, see the plan that produced 2026-07-31's commits for the full breakdown):
+- Multi-sport summary data — cycling, swimming, hiking, climbing, etc. — generalizing `ActivityPuller`/`updaters.py`'s activity loop from two bespoke methods into one registry-driven loop, to replace the Activities tab's mock overview.
+- Better lifting analysis — currently just a Gaussian moving average over 3 hardcoded exercises' top-set weight; needs exercise discovery, 1RM/volume tracking, and the same STS trend treatment already built for Health metrics.
+- A per-activity GPS/detail drill-in (replacing `_mock_activity_detail`) is still unstarted — needs new Garmin endpoint research (splits/laps/polyline), deferred beyond a one-activity sample pull for map prototyping.
+- Legacy DB-backed paths and legacy S3 prefixes (`processed/`, `moving_averages/`, `dashboards/`) are still due for intentional retirement — not yet done.
 
 ## Goal 3 — Bokeh → Plotly Migration
 
