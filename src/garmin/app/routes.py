@@ -98,13 +98,25 @@ DATA_STATUS_DAILY_DATASETS = [
 
 DATA_STATUS_CODES = {'untouched': 0, 'no_data': 1, 'denied': 2, 'fetched': 3}
 
+# Fixed rather than derived from the data -- Garmin device history for this
+# account starts around here, and a fixed axis start keeps the calendar's
+# column count (and therefore its rendered width) stable run to run instead
+# of creeping earlier every time an older dataset happens to be involved.
+DATA_STATUS_START_DATE = pd.Timestamp('2015-12-01')
+
 
 def _data_status_payload(source: str = 'local') -> dict:
-    """Per-day pull status (fetched/no_data/denied/untouched) for every dataset
+    """Per-week pull status (fetched/no_data/denied/untouched) for every dataset
     that tracks it, for the calendar-style status monitor. Activity datasets
     (running/strength/...) are excluded -- ActivityPuller doesn't yet detect
     or record 429/denial the way HealthDetailedPuller does, so there's no
     per-day status to show for them.
+
+    Aggregated to one column per week (majority status that week), not one
+    per day: at ~10 years of history that's ~4000 days, which renders as
+    sub-pixel columns in any reasonably-sized chart and visually corrupts
+    into muddy/near-black bands. ~550 weekly columns fits a normal screen
+    width cleanly instead of requiring horizontal scroll.
     """
     store = curated_s3 if source == 's3' else curated_local
     today = pd.Timestamp.today().normalize()
@@ -131,8 +143,9 @@ def _data_status_payload(source: str = 'local') -> dict:
     if not per_dataset:
         return {'datasets': [], 'dates': [], 'status_codes': DATA_STATUS_CODES}
 
-    global_start = min(info['start'] for info in per_dataset.values())
-    all_dates = pd.date_range(global_start, today, freq='D')
+    all_dates = pd.date_range(DATA_STATUS_START_DATE, today, freq='D')
+    week_starts = all_dates.to_period('W-MON').start_time
+    unique_weeks = sorted(week_starts.unique())
 
     datasets_payload = []
     for name in DATA_STATUS_DETAILED_DATASETS + DATA_STATUS_DAILY_DATASETS:
@@ -140,20 +153,28 @@ def _data_status_payload(source: str = 'local') -> dict:
         if info is None:
             continue
         status_by_date = info['status_by_date']
-        statuses = [
+        daily_codes = [
             DATA_STATUS_CODES.get(status_by_date.get(d), DATA_STATUS_CODES['untouched']) if d >= info['start']
             else DATA_STATUS_CODES['untouched']
             for d in all_dates
         ]
+        # Majority vote per week -- ties resolve to whichever code
+        # value_counts() lists first, not a meaningful preference.
+        weekly = (
+            pd.Series(daily_codes, index=week_starts)
+            .groupby(level=0)
+            .agg(lambda s: s.value_counts().idxmax())
+            .reindex(unique_weeks, fill_value=DATA_STATUS_CODES['untouched'])
+        )
         datasets_payload.append({
             'name': name,
             'kind': 'detailed' if name in DATA_STATUS_DETAILED_DATASETS else 'daily',
-            'statuses': statuses,
+            'statuses': weekly.tolist(),
         })
 
     return {
         'datasets': datasets_payload,
-        'dates': [d.date().isoformat() for d in all_dates],
+        'dates': [w.date().isoformat() for w in unique_weeks],
         'status_codes': DATA_STATUS_CODES,
     }
 

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Data Status — Garmin{% endblock %}
-{% block subtitle %}Per-day pull status for every tracked dataset — green is fetched, grey is confirmed empty, amber is rate-limited (may still have data), light is untouched{% endblock %}
+{% block subtitle %}Per-week pull status for every tracked dataset (majority status that week) — green is fetched, grey is confirmed empty, amber is rate-limited (may still have data), light is untouched{% endblock %}
 {% block head %}
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 {% endblock %}
@@ -26,9 +26,7 @@
         <span><span class="status-swatch" style="background: var(--lg-warning);"></span> Denied (rate-limited — may still have data)</span>
         <span><span class="status-swatch" style="background: var(--lg-border);"></span> Untouched</span>
     </div>
-    <div style="overflow-x: auto;">
-        <div class="chart-host" id="status-heatmap" style="min-height: 300px;"></div>
-    </div>
+    <div class="chart-host" id="status-heatmap" style="min-height: 300px;"></div>
 </section>
 
 <style>
@@ -109,17 +107,8 @@ function renderStatusHeatmap(payload) {
         ygap: 1,
     };
 
-    // Multi-year date ranges (thousands of days) squeezed into a container
-    // a few hundred pixels wide leave each day sub-pixel, which the browser
-    // then blends/aliases into muddy or near-black bands instead of a clean
-    // color. Give each day a real minimum pixel width and let the outer
-    // wrapper scroll horizontally instead of shrinking the plot to fit.
-    const PIXELS_PER_DAY = 3;
-    const plotWidth = Math.max(900, payload.dates.length * PIXELS_PER_DAY);
-
     const layout = {
         margin: { l: 160, r: 16, t: 8, b: 36 },
-        width: plotWidth,
         height: Math.max(220, datasets.length * 22 + 60),
         paper_bgcolor: 'transparent',
         plot_bgcolor: 'transparent',
@@ -128,7 +117,7 @@ function renderStatusHeatmap(payload) {
         yaxis: { gridcolor: 'transparent', zeroline: false, automargin: true },
     };
 
-    Plotly.react('status-heatmap', [trace], layout, { responsive: false, displaylogo: false });
+    Plotly.react('status-heatmap', [trace], layout, { responsive: true, displaylogo: false });
 }
 
 async function loadDataStatus(source) {

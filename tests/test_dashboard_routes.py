@@ -185,37 +185,44 @@ def test_lifting_real_payload_returns_none_without_analyzed_data(tmp_path, monke
     assert routes_module._lifting_real_payload(source='local') is None
 
 
-def test_data_status_payload_reports_fetched_no_data_denied_and_untouched(tmp_path, monkeypatch) -> None:
+def test_data_status_payload_aggregates_weekly_by_majority_status(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
     store = routes_module.curated_local
 
-    store.merge_detailed_status('heart_rate_detailed', pd.DataFrame([
-        {'query_date': '2024-01-01', 'date_pulled': '2024-01-02', 'pull_status': 'fetched'},
-        {'query_date': '2024-01-02', 'date_pulled': '2024-01-02', 'pull_status': 'no_data'},
-        {'query_date': '2024-01-03', 'date_pulled': '2024-01-02', 'pull_status': 'denied'},
-    ]))
+    # 2024-01-09 through 2024-01-15 all fall in the same W-MON-anchored week
+    # bucket (labeled by its start, 2024-01-09): 5 fetched, 2 no_data -> majority fetched.
+    week_rows = [
+        {'query_date': f'2024-01-{day:02d}', 'date_pulled': '2024-01-15', 'pull_status': status}
+        for day, status in zip(range(9, 16), ['fetched'] * 5 + ['no_data'] * 2)
+    ]
+    store.merge_detailed_status('heart_rate_detailed', pd.DataFrame(week_rows))
+    # A daily dataset's weekly status is a majority vote over its 7 individual
+    # days too -- give it a row for every day in the week, not just one, or
+    # the other 6 untouched days would (correctly) outvote it.
     store.merge_daily('steps', pd.DataFrame([
-        {'date': '2024-01-01', 'total_steps': 9000},
+        {'date': f'2024-01-{day:02d}', 'total_steps': 9000} for day in range(9, 16)
     ]))
 
     payload = routes_module._data_status_payload(source='local')
 
+    assert payload['dates'][0] == '2015-12-01'  # DATA_STATUS_START_DATE's own week label
+
     by_name = {d['name']: d for d in payload['datasets']}
-    hr = by_name['heart_rate_detailed']
     idx = {d: i for i, d in enumerate(payload['dates'])}
     codes = payload['status_codes']
-    assert hr['statuses'][idx['2024-01-01']] == codes['fetched']
-    assert hr['statuses'][idx['2024-01-02']] == codes['no_data']
-    assert hr['statuses'][idx['2024-01-03']] == codes['denied']
+
+    hr = by_name['heart_rate_detailed']
+    assert hr['statuses'][idx['2024-01-09']] == codes['fetched']
+    # Weeks entirely before the dataset's own first tracked date are untouched.
+    assert hr['statuses'][idx['2015-12-01']] == codes['untouched']
 
     steps = by_name['steps']
-    assert steps['statuses'][idx['2024-01-01']] == codes['fetched']
-    # A date after steps' only recorded date but still in the shared global
-    # range (extended by heart_rate_detailed's later dates) should read as
-    # untouched, not fetched.
-    later_date = payload['dates'][-1]
-    if later_date != '2024-01-01':
-        assert steps['statuses'][idx[later_date]] == codes['untouched']
+    assert steps['statuses'][idx['2024-01-09']] == codes['fetched']
+    # A week well after steps' only recorded date, but still in the shared
+    # range (extended by heart_rate_detailed's later weeks), reads untouched.
+    later_week = payload['dates'][-1]
+    if later_week != '2024-01-09':
+        assert steps['statuses'][idx[later_week]] == codes['untouched']
 
 
 def test_data_status_payload_empty_when_nothing_pulled(tmp_path, monkeypatch) -> None:
