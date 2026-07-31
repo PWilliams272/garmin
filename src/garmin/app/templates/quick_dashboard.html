@@ -240,11 +240,21 @@ function renderAnalyzedChart(config, anchorDate) {
         marker: { color, size: 6, opacity: 0.6, symbol: 'circle-open', line: { width: 1.5, color } },
         yaxis: 'y', hovertemplate: '%{x}<br>%{y} (lower confidence)<extra></extra>', name: 'Uncertain',
     });
+    if (stsTrend.length) {
+        traces.push({ x: stsTrend.map(t => t.date), y: stsTrend.map(t => t.upper_95), type: 'scatter', mode: 'lines', line: { color: stsColor, width: 1, dash: 'dot' }, hoverinfo: 'skip', showlegend: false });
+        traces.push({ x: stsTrend.map(t => t.date), y: stsTrend.map(t => t.lower_95), type: 'scatter', mode: 'lines', line: { color: stsColor, width: 1, dash: 'dot' }, hoverinfo: 'skip', showlegend: false });
+        traces.push({
+            x: stsTrend.map(t => t.date).concat(stsTrend.map(t => t.date).slice().reverse()),
+            y: stsTrend.map(t => t.upper_68).concat(stsTrend.map(t => t.lower_68).slice().reverse()),
+            type: 'scatter', mode: 'lines', fill: 'toself', fillcolor: stsColor + '33',
+            line: { color: 'transparent' }, hoverinfo: 'skip', showlegend: false,
+        });
+    }
     if (gpTrend.length) {
         traces.push({ x: gpTrend.map(t => t.date), y: gpTrend.map(t => t.mean), type: 'scatter', mode: 'lines', line: { color, width: 2.5 }, name: 'GP trend', showlegend: true });
     }
     if (stsTrend.length) {
-        traces.push({ x: stsTrend.map(t => t.date), y: stsTrend.map(t => t.mean), type: 'scatter', mode: 'lines', line: { color: stsColor, width: 2, dash: 'dash' }, name: 'Structural TS trend', showlegend: true });
+        traces.push({ x: stsTrend.map(t => t.date), y: stsTrend.map(t => t.mean), type: 'scatter', mode: 'lines', line: { color: stsColor, width: 2.5 }, name: 'Structural TS trend', showlegend: true });
     }
 
     const overlaysChecked = (config.overlays || []).filter((o) => document.getElementById(o.checkboxId).checked);
