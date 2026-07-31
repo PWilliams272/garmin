@@ -45,6 +45,21 @@ function token(name) {
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
+// token() returns a CSS custom property's value as-declared, not resolved --
+// fine for plain hex values, but --lg-text-3 is declared via color-mix(...)
+// referencing other variables, and Plotly's color parser can't handle that
+// literal "color-mix(...)" string. Resolving it through a real element's
+// computed `color` (which the browser does evaluate color-mix() for) gets
+// an actual rgb() string any consumer can use.
+function resolvedColor(varName) {
+    const el = document.createElement('span');
+    el.style.color = `var(${varName})`;
+    document.body.appendChild(el);
+    const rgb = getComputedStyle(el).color;
+    document.body.removeChild(el);
+    return rgb;
+}
+
 function setStatus(message) {
     document.getElementById('data-status-status').textContent = message;
 }
@@ -56,10 +71,10 @@ function datasetLabel(name) {
 function renderStatusHeatmap(payload) {
     const codes = payload.status_codes; // {untouched:0, no_data:1, denied:2, fetched:3}
     const colorByCode = {
-        [codes.untouched]: token('--lg-border'),
-        [codes.no_data]: token('--lg-text-3'),
-        [codes.denied]: token('--lg-warning'),
-        [codes.fetched]: token('--lg-success'),
+        [codes.untouched]: resolvedColor('--lg-border'),
+        [codes.no_data]: resolvedColor('--lg-text-3'),
+        [codes.denied]: resolvedColor('--lg-warning'),
+        [codes.fetched]: resolvedColor('--lg-success'),
     };
     // Discrete colorscale: each code occupies an equal band of [0,1], flat
     // color within the band (no interpolation) so the heatmap reads as
@@ -80,8 +95,11 @@ function renderStatusHeatmap(payload) {
         x: payload.dates,
         y,
         z,
-        zmin: 0,
-        zmax: n,
+        // -0.5/n-0.5 (not 0/n) centers each integer code within its color
+        // band instead of landing exactly on a band boundary, where Plotly's
+        // interpolation would pick an arbitrary neighboring color.
+        zmin: -0.5,
+        zmax: n - 0.5,
         colorscale,
         showscale: false,
         hovertemplate: '%{y}<br>%{x}<extra></extra>',
