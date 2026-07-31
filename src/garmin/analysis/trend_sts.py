@@ -40,6 +40,7 @@ def fit_structural_trend(
     values: pd.Series,
     weights: pd.Series | None = None,
     *,
+    level: str = "local linear trend",
     min_value: float | None = 0.0,
     max_value: float | None = None,
 ) -> tuple[pd.DataFrame, float]:
@@ -74,7 +75,7 @@ def fit_structural_trend(
     full_index = pd.date_range(df["date"].min(), df["date"].max(), freq="D")
     series = df.set_index("date")["value"].reindex(full_index)
 
-    model = UnobservedComponents(series, level="local linear trend")
+    model = UnobservedComponents(series, level=level)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         result = model.fit(disp=False)

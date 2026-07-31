@@ -277,22 +277,102 @@ function renderAnalyzedChart(config, anchorDate) {
         yaxisRange = [dataMin - pad, dataMax + pad];
     }
 
+    // Residual = observed - STS trend at that date, for the bottom "how well
+    // does each reading fit the trend" strip + its marginal histogram.
+    const trendByDate = {};
+    stsTrend.forEach(t => { trendByDate[t.date] = t.mean; });
+    const residualPoints = visiblePoints
+        .filter(p => trendByDate[p.date] !== undefined && p[config.metricKey] !== null && p[config.metricKey] !== undefined)
+        .map(p => ({ date: p.date, residual: p[config.metricKey] - trendByDate[p.date], quality_tier: p.quality_tier }));
+    const normalResiduals = residualPoints.filter(r => r.quality_tier === 'normal');
+
+    traces.push({
+        x: residualPoints.map(r => r.date), y: residualPoints.map(r => r.residual),
+        type: 'scatter', mode: 'markers', marker: { color: stsColor, size: 4, opacity: 0.45 },
+        xaxis: 'x9', yaxis: 'y9', hovertemplate: '%{x}<br>%{y:.2f}<extra></extra>', showlegend: false,
+    });
+    traces.push({
+        y: residualPoints.map(r => r.residual),
+        type: 'histogram', orientation: 'h', marker: { color: stsColor, opacity: 0.5 },
+        xaxis: 'x10', yaxis: 'y11', showlegend: false, hoverinfo: 'skip',
+    });
+
+    // Range from normal-tier residuals only -- same "uncertain points still
+    // plotted, but don't get to stretch the axis" rule as the main chart.
+    const rangeSource = normalResiduals.length ? normalResiduals : residualPoints;
+    const residualAbsMax = rangeSource.length ? Math.max(...rangeSource.map(r => Math.abs(r.residual))) : 1;
+    const residualPad = residualAbsMax * 0.15 || 1;
+    const residualRange = [-(residualAbsMax + residualPad), residualAbsMax + residualPad];
+
+    // Model's own assumed noise level (day_to_day_std, constant across the
+    // trend series) as +-1/+-2 sigma reference bands, so you can see whether
+    // the actual residual spread matches what the model assumes.
+    const sigma = stsTrend.length ? stsTrend[0].day_to_day_std : null;
+    const borderColor = token('--lg-border');
+    const shapes = [];
+    if (sigma) {
+        shapes.push(
+            { type: 'rect', xref: 'x9 domain', x0: 0, x1: 1, yref: 'y9', y0: -sigma, y1: sigma, fillcolor: stsColor + '1a', line: { width: 0 }, layer: 'below' },
+            { type: 'line', xref: 'x9 domain', x0: 0, x1: 1, yref: 'y9', y0: 2 * sigma, y1: 2 * sigma, line: { color: stsColor, width: 1, dash: 'dot' } },
+            { type: 'line', xref: 'x9 domain', x0: 0, x1: 1, yref: 'y9', y0: -2 * sigma, y1: -2 * sigma, line: { color: stsColor, width: 1, dash: 'dot' } },
+            { type: 'rect', xref: 'x10 domain', x0: 0, x1: 1, yref: 'y11', y0: -sigma, y1: sigma, fillcolor: stsColor + '1a', line: { width: 0 }, layer: 'below' },
+            { type: 'line', xref: 'x10 domain', x0: 0, x1: 1, yref: 'y11', y0: 2 * sigma, y1: 2 * sigma, line: { color: stsColor, width: 1, dash: 'dot' } },
+            { type: 'line', xref: 'x10 domain', x0: 0, x1: 1, yref: 'y11', y0: -2 * sigma, y1: -2 * sigma, line: { color: stsColor, width: 1, dash: 'dot' } },
+        );
+    }
+
+    // Main plot, residual strip, and histogram all align to the same left/
+    // right edges (main+residual share their x-domain exactly); the
+    // histogram starts immediately where that domain ends.
+    const CONTENT_X_MAX = 0.82;
+    const HIST_X_START = 0.9;
+
     const overlaysChecked = (config.overlays || []).filter((o) => document.getElementById(o.checkboxId).checked);
     const layout = baseLayout(config.yAxisTitle, {
-        margin: { l: 60, r: overlaysChecked.length ? 24 : 16, t: 8, b: 36 },
+        margin: { l: 60, r: 16, t: 8, b: 36 },
+        height: 440,
         showlegend: true,
-        legend: { orientation: 'h', y: -0.2 },
+        legend: { orientation: 'h', y: -0.08 },
+        shapes,
     });
+    layout.xaxis.domain = [0, CONTENT_X_MAX];
+    layout.xaxis.showticklabels = false;
+    layout.xaxis.showline = true;
+    layout.xaxis.linecolor = borderColor;
+    layout.xaxis.linewidth = 1;
+    layout.yaxis.domain = [0.42, 1];
+    layout.yaxis.showline = true;
+    layout.yaxis.linecolor = borderColor;
+    layout.yaxis.linewidth = 1;
     if (yaxisRange) {
         layout.yaxis.range = yaxisRange;
         layout.yaxis.autorange = false;
     }
 
-    if (overlaysChecked.length > 0) {
-        const axisGap = 0.12;
-        const domainMax = Math.max(0.4, 1 - (overlaysChecked.length - 1) * axisGap);
-        layout.xaxis.domain = [0, domainMax];
+    layout.xaxis9 = {
+        domain: [0, CONTENT_X_MAX], anchor: 'y9', matches: 'x',
+        gridcolor: borderColor, zeroline: false,
+    };
+    layout.yaxis9 = {
+        domain: [0, 0.34], anchor: 'x9', range: residualRange,
+        gridcolor: borderColor, zeroline: true,
+        zerolinecolor: token('--lg-text-2'), zerolinewidth: 1,
+        showline: true, linecolor: borderColor, linewidth: 1,
+        title: { text: 'Residual', font: { size: 10 } },
+    };
+    layout.xaxis10 = {
+        domain: [HIST_X_START, 1], anchor: 'y11',
+        gridcolor: 'transparent', zeroline: false,
+        showticklabels: false, ticks: '',
+    };
+    layout.yaxis11 = {
+        domain: [0, 0.34], anchor: 'x10', matches: 'y9',
+        showticklabels: false, gridcolor: 'transparent', zeroline: false,
+        showline: true, linecolor: borderColor, linewidth: 1,
+    };
 
+    if (overlaysChecked.length > 0) {
+        const overlayAxisGap = (1 - CONTENT_X_MAX) / overlaysChecked.length;
         overlaysChecked.forEach((overlay, idx) => {
             const axisNum = idx + 2;
             const overlayEntry = (chartState.analyzed && chartState.analyzed[overlay.metricKey]) || { points: [], trend_gp: [] };
@@ -312,7 +392,7 @@ function renderAnalyzedChart(config, anchorDate) {
                 });
             }
             layout['yaxis' + axisNum] = {
-                overlaying: 'y', side: 'right', anchor: 'free', position: Math.min(1, domainMax + idx * axisGap),
+                overlaying: 'y', side: 'right', anchor: 'free', position: Math.min(1, CONTENT_X_MAX + overlayAxisGap * (idx + 1)),
                 gridcolor: 'transparent', zeroline: false,
                 title: { text: overlay.yAxisTitle, font: { color: overlayColor, size: 11 } },
                 tickfont: { color: overlayColor },
