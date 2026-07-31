@@ -7,10 +7,14 @@ from garmin.dashboard_curated import (
     curated_dashboard_relative_dir,
 )
 from garmin.data_processor.processor import GarminDataProcessor
+from garmin.analysis.quality import classify_metric
+from garmin.analysis.trend_gp import fit_gp_trend
 import numpy as np
 import pandas as pd
 import os
 import random as _random
+
+RUNNING_ANALYZED_METRICS = ['cadence_spm', 'pace_min_per_mile', 'distance_mi']
 
 QUICK_DASHBOARD_MA_BANDWIDTH_DAYS = 14
 MOCK_MA_BANDWIDTH_DAYS = 21
@@ -152,9 +156,24 @@ def _running_payload() -> dict:
         .agg(run_count=('distance_mi', 'count'), total_distance_mi=('distance_mi', 'sum'))
         .reset_index()
     )
+
+    # Mock data is synthetic/preview-only, so computing its analyzed view live
+    # (unlike real data, which is always precomputed) is fine -- it lets the
+    # UI preview the quality-tier/GP rendering before real analyzed data exists.
+    analyzed = {}
+    for metric in RUNNING_ANALYZED_METRICS:
+        points = classify_metric(df[['date', metric]], metric)
+        fittable = points[points['quality_weight'] > 0]
+        trend = fit_gp_trend(fittable['date'], fittable[metric], fittable['quality_weight'])
+        analyzed[metric] = {
+            'points': _timeseries_records(points),
+            'trend': _timeseries_records(trend) if not trend.empty else [],
+        }
+
     return {
         'runs': _timeseries_records(df),
         'weekly': _timeseries_records(weekly),
+        'analyzed': analyzed,
     }
 
 
@@ -223,12 +242,23 @@ def _running_real_payload(source: str = 'local') -> dict | None:
     df['date'] = pd.to_datetime(df['date'])
     df = df.sort_values('date').reset_index(drop=True)
 
-    processor = GarminDataProcessor()
-    ma_columns = [c for c in ['distance_mi', 'pace_min_per_mile', 'cadence_spm'] if c in df.columns]
-    if ma_columns:
-        ma_df = processor.calculate_moving_averages(df, ma_columns, kernels=['gaussian'], bandwidths=[MOCK_MA_BANDWIDTH_DAYS])
-        for col in ma_columns:
-            df[f'{col}_ma'] = ma_df[f'{col}_gaussian_{MOCK_MA_BANDWIDTH_DAYS}']
+    # Quality classification + GP trend fitting are precomputed by
+    # garmin.scripts.manual_analyze_activities into curated/analyzed/ — this
+    # route only ever reads that output, it never fits a GP on request.
+    analyzed = {}
+    any_analyzed = False
+    for metric in RUNNING_ANALYZED_METRICS:
+        points = store.load_analyzed_points('running', metric)
+        trend = store.load_analyzed_trend('running', metric)
+        if not points.empty:
+            any_analyzed = True
+        analyzed[metric] = {
+            'points': _timeseries_records(points) if not points.empty else [],
+            'trend': _timeseries_records(trend) if not trend.empty else [],
+        }
+
+    if not any_analyzed:
+        return None
 
     weekly = (
         df.set_index('date')
@@ -239,6 +269,7 @@ def _running_real_payload(source: str = 'local') -> dict | None:
     return {
         'runs': _timeseries_records(df),
         'weekly': _timeseries_records(weekly),
+        'analyzed': analyzed,
     }
 
 

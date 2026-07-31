@@ -13,6 +13,37 @@
     <button type="button" class="tab-button" data-sport="swimming" role="tab" aria-selected="false">Swimming</button>
 </nav>
 
+<section class="card chart-card">
+    <div class="control-grid">
+        <label class="inline-select-control">
+            Range
+            <div class="range-group" id="range-group">
+                <button type="button" data-days="7">7D</button>
+                <button type="button" data-days="30">30D</button>
+                <button type="button" data-days="90">90D</button>
+                <button type="button" data-days="180" class="active">180D</button>
+                <button type="button" data-days="365">1Y</button>
+                <button type="button" data-days="730">2Y</button>
+                <button type="button" data-days="custom">Custom</button>
+            </div>
+        </label>
+    </div>
+    <div class="control-grid" id="custom-range-row" style="display: none; margin-top: 12px;">
+        <label class="inline-select-control">
+            Start Date
+            <input id="custom-start-date" type="date">
+        </label>
+        <label class="inline-select-control">
+            End Date
+            <input id="custom-end-date" type="date">
+        </label>
+        <label class="inline-select-control">
+            &nbsp;
+            <button id="apply-custom-range" type="button" class="ghost-button">Apply</button>
+        </label>
+    </div>
+</section>
+
 <div class="tab-pane active" id="pane-running">
     <div style="display: flex; align-items: center; gap: 10px;">
         <span class="mock-badge" id="running-mock-badge" style="display: none;">Mock data</span>
@@ -23,6 +54,7 @@
         <div class="card chart-card">
             <div class="section-heading">Pace</div>
             <div class="chart-host" id="run-pace-chart"></div>
+            <div class="status-line" id="run-pace-outliers"></div>
         </div>
         <div class="card stat-panel" id="run-pace-stats"></div>
     </div>
@@ -31,6 +63,7 @@
         <div class="card chart-card">
             <div class="section-heading">Cadence</div>
             <div class="chart-host" id="run-cadence-chart"></div>
+            <div class="status-line" id="run-cadence-outliers"></div>
         </div>
         <div class="card stat-panel" id="run-cadence-stats"></div>
     </div>
@@ -101,6 +134,18 @@ function token(name) {
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
+function coerceDate(value) {
+    return value ? new Date(value + 'T00:00:00') : null;
+}
+
+const fitnessState = {
+    rangeDays: 180,
+    customStart: null,
+    customEnd: null,
+    running: null,
+    lifting: null,
+};
+
 const loadedSports = new Set();
 
 document.getElementById('sport-tabs').addEventListener('click', (event) => {
@@ -129,11 +174,33 @@ async function loadSport(sport) {
         const response = await fetch('/api/fitness_data?sport=' + encodeURIComponent(sport));
         const payload = await response.json();
         if (payload.error) throw new Error(payload.error);
-        if (sport === 'running') renderRunning(payload);
-        if (sport === 'lifting') renderLifting(payload);
+        if (sport === 'running') { fitnessState.running = payload; renderRunning(); }
+        if (sport === 'lifting') { fitnessState.lifting = payload; renderLifting(); }
     } catch (error) {
         console.error('Failed to load ' + sport + ' data', error);
     }
+}
+
+function filterByRange(rows, anchorDate, dateKey) {
+    dateKey = dateKey || 'date';
+    if (!rows.length) return rows;
+    if (fitnessState.rangeDays === 'custom') {
+        const start = fitnessState.customStart ? coerceDate(fitnessState.customStart) : null;
+        const end = fitnessState.customEnd ? coerceDate(fitnessState.customEnd) : null;
+        return rows.filter((r) => {
+            const d = coerceDate(r[dateKey]);
+            if (!d) return false;
+            if (start && d < start) return false;
+            if (end && d > end) return false;
+            return true;
+        });
+    }
+    const startDate = new Date(anchorDate);
+    startDate.setDate(startDate.getDate() - fitnessState.rangeDays);
+    return rows.filter((r) => {
+        const d = coerceDate(r[dateKey]);
+        return d && d >= startDate && d <= anchorDate;
+    });
 }
 
 function baseLayout(yTitle, extra) {
@@ -153,10 +220,6 @@ function setMockStatus(badgeId, statusId, isMock) {
     document.getElementById(statusId).textContent = isMock
         ? 'Synthetic example — replace once real activity data is flowing.'
         : 'Real data from your curated activity history.';
-}
-
-function coerceDate(value) {
-    return value ? new Date(value + 'T00:00:00') : null;
 }
 
 // Average of `key` over rows whose date falls in (endDate - startDaysAgo, endDate - endDaysAgo].
@@ -193,7 +256,7 @@ function renderStatPanel(elementId, items) {
         <div class="stat-item">
             <div class="stat-item-label">${item.label}</div>
             <div class="stat-item-value">${item.value}</div>
-            <div class="stat-item-trend" style="color: ${item.trendColor || 'inherit'};">${item.trendText}</div>
+            <div class="stat-item-trend" style="color: ${item.trendColor || 'inherit'};">${item.trendText || ''}</div>
         </div>
     `).join('');
 }
@@ -214,27 +277,88 @@ function metricStatPanel(elementId, rows, key, format, betterWhen) {
     ]);
 }
 
-function renderRunning(payload) {
+// Renders a chart from precomputed quality-tiered points + a GP mean/CI trend
+// (garmin.analysis.quality / garmin.analysis.trend_gp, run offline by
+// manual_analyze_activities.py -- nothing here is fit on request).
+function renderAnalyzedChart(chartElementId, outlierElementId, analyzed, metricKey, colorToken, yAxisTitle, anchorDate, layoutExtra) {
+    const color = token(colorToken);
+    const allPoints = analyzed.points || [];
+    const allTrend = analyzed.trend || [];
+
+    const visiblePoints = filterByRange(allPoints, anchorDate).filter((p) => p.quality_tier !== 'hard');
+    const normalPoints = visiblePoints.filter((p) => p.quality_tier === 'normal');
+    const softPoints = visiblePoints.filter((p) => p.quality_tier === 'soft');
+    const trend = filterByRange(allTrend, anchorDate);
+
+    const traces = [];
+
+    if (trend.length) {
+        traces.push({
+            x: trend.map((t) => t.date).concat(trend.map((t) => t.date).slice().reverse()),
+            y: trend.map((t) => t.upper_95).concat(trend.map((t) => t.lower_95).slice().reverse()),
+            type: 'scatter', mode: 'lines', fill: 'toself', fillcolor: color + '22',
+            line: { color: 'transparent' }, hoverinfo: 'skip', showlegend: false,
+        });
+    }
+
+    traces.push({
+        x: normalPoints.map((p) => p.date), y: normalPoints.map((p) => p[metricKey]),
+        type: 'scatter', mode: 'markers', marker: { color, size: 4, opacity: 0.35 },
+        name: 'Observed', hovertemplate: '%{x}<br>%{y}<extra></extra>',
+    });
+
+    traces.push({
+        x: softPoints.map((p) => p.date), y: softPoints.map((p) => p[metricKey]),
+        type: 'scatter', mode: 'markers',
+        marker: { color, size: 6, opacity: 0.6, symbol: 'circle-open', line: { width: 1.5, color } },
+        name: 'Uncertain', hovertemplate: '%{x}<br>%{y} (lower confidence)<extra></extra>',
+    });
+
+    if (trend.length) {
+        traces.push({
+            x: trend.map((t) => t.date), y: trend.map((t) => t.mean),
+            type: 'scatter', mode: 'lines', line: { color, width: 2.5 }, name: 'Trend',
+        });
+    }
+
+    Plotly.newPlot(chartElementId, traces, baseLayout(yAxisTitle, layoutExtra), { responsive: true, displaylogo: false });
+
+    const hardPoints = filterByRange(allPoints, anchorDate).filter((p) => p.quality_tier === 'hard');
+    const outlierEl = document.getElementById(outlierElementId);
+    if (hardPoints.length) {
+        const detail = hardPoints.map((p) => `${p.date}: ${p[metricKey]}`).join(', ');
+        outlierEl.textContent = `⚠ ${hardPoints.length} point${hardPoints.length > 1 ? 's' : ''} excluded (data quality) — hover for details`;
+        outlierEl.title = detail;
+    } else {
+        outlierEl.textContent = '';
+        outlierEl.title = '';
+    }
+}
+
+function renderRunning() {
+    const payload = fitnessState.running;
+    if (!payload) return;
     setMockStatus('running-mock-badge', 'running-status-line', payload.mock);
     const runs = payload.runs;
     const weekly = payload.weekly;
     if (!runs.length) return;
 
-    const color = token('--lg-gold');
-    Plotly.newPlot('run-pace-chart', [
-        { x: runs.map(r => r.date), y: runs.map(r => r.pace_min_per_mile), type: 'scatter', mode: 'markers', marker: { color, size: 4, opacity: 0.35 } },
-        { x: runs.map(r => r.date), y: runs.map(r => r.pace_min_per_mile_ma), type: 'scatter', mode: 'lines', line: { color, width: 2.5 } },
-    ], baseLayout('Pace (min/mi, faster ↑)', { yaxis: { gridcolor: token('--lg-border'), zeroline: false, autorange: 'reversed', title: { text: 'Pace (min/mi, faster ↑)', font: { size: 11 } } } }), { responsive: true, displaylogo: false });
+    const anchorDate = coerceDate(runs[runs.length - 1].date);
+
+    renderAnalyzedChart(
+        'run-pace-chart', 'run-pace-outliers', payload.analyzed.pace_min_per_mile, 'pace_min_per_mile',
+        '--lg-gold', 'Pace (min/mi, faster ↑)', anchorDate,
+        { yaxis: { gridcolor: token('--lg-border'), zeroline: false, autorange: 'reversed', title: { text: 'Pace (min/mi, faster ↑)', font: { size: 11 } } } }
+    );
     metricStatPanel('run-pace-stats', runs, 'pace_min_per_mile', (v) => v.toFixed(2) + ' /mi', 'lower');
 
-    const cadenceColor = token('--lg-highlight');
-    Plotly.newPlot('run-cadence-chart', [
-        { x: runs.map(r => r.date), y: runs.map(r => r.cadence_spm), type: 'scatter', mode: 'markers', marker: { color: cadenceColor, size: 4, opacity: 0.35 } },
-        { x: runs.map(r => r.date), y: runs.map(r => r.cadence_spm_ma), type: 'scatter', mode: 'lines', line: { color: cadenceColor, width: 2.5 } },
-    ], baseLayout('Cadence (steps/min)'), { responsive: true, displaylogo: false });
+    renderAnalyzedChart(
+        'run-cadence-chart', 'run-cadence-outliers', payload.analyzed.cadence_spm, 'cadence_spm',
+        '--lg-highlight', 'Cadence (steps/min)', anchorDate
+    );
     metricStatPanel('run-cadence-stats', runs, 'cadence_spm', (v) => Math.round(v) + ' spm', null);
 
-    const recentWeekly = weekly.slice(-26);
+    const recentWeekly = filterByRange(weekly, anchorDate);
 
     const distColor = token('--lg-success');
     Plotly.newPlot('run-weekly-distance-chart', [
@@ -249,7 +373,9 @@ function renderRunning(payload) {
     metricStatPanel('run-count-stats', weekly, 'run_count', (v) => v.toFixed(1) + ' /wk', 'higher');
 }
 
-function renderLifting(payload) {
+function renderLifting() {
+    const payload = fitnessState.lifting;
+    if (!payload) return;
     setMockStatus('lifting-mock-badge', 'lifting-status-line', payload.mock);
     const exercises = payload.exercises;
     const exerciseMeta = {
@@ -258,10 +384,20 @@ function renderLifting(payload) {
         curl: { label: 'Bicep Curl', colorToken: '--lg-success' },
     };
 
+    let anchorDate = null;
+    Object.values(exercises).forEach((rows) => {
+        if (rows.length) {
+            const d = coerceDate(rows[rows.length - 1].date);
+            if (!anchorDate || d > anchorDate) anchorDate = d;
+        }
+    });
+    if (!anchorDate) anchorDate = new Date();
+
     const traces = [];
     const weightStatItems = [];
     Object.entries(exerciseMeta).forEach(([key, meta]) => {
-        const rows = exercises[key] || [];
+        const allRows = exercises[key] || [];
+        const rows = filterByRange(allRows, anchorDate);
         if (!rows.length) {
             weightStatItems.push({ label: meta.label, value: '—', trendText: 'no data yet' });
             return;
@@ -270,19 +406,18 @@ function renderLifting(payload) {
         traces.push({ x: rows.map(r => r.date), y: rows.map(r => r.top_weight_lb), type: 'scatter', mode: 'markers', marker: { color, size: 4, opacity: 0.3 }, name: meta.label, showlegend: false });
         traces.push({ x: rows.map(r => r.date), y: rows.map(r => r.top_weight_lb_ma), type: 'scatter', mode: 'lines', line: { color, width: 2.5 }, name: meta.label, showlegend: true });
 
-        const endDate = coerceDate(rows[rows.length - 1].date);
-        const last30 = windowAvg(rows, 'top_weight_lb', 30, 0, endDate);
-        const prior30 = windowAvg(rows, 'top_weight_lb', 60, 30, endDate);
+        const last30 = windowAvg(allRows, 'top_weight_lb', 30, 0, anchorDate);
+        const prior30 = windowAvg(allRows, 'top_weight_lb', 60, 30, anchorDate);
         const trend = trendMeta(last30, prior30, 'higher');
-        const latest = rows[rows.length - 1].top_weight_lb;
+        const latest = allRows[allRows.length - 1].top_weight_lb;
         weightStatItems.push({ label: meta.label, value: Math.round(latest) + ' lb', trendText: trend.text, trendColor: trend.color });
     });
     renderStatPanel('lift-weight-stats', weightStatItems);
 
     Plotly.newPlot('lift-weight-chart', traces, baseLayout('Top Set Weight (lb)', { showlegend: true, legend: { orientation: 'h', y: -0.2 } }), { responsive: true, displaylogo: false });
 
-    const freq = payload.weekly_frequency;
-    const weeks = [...new Set(freq.map(r => r.date))].sort().slice(-26);
+    const freq = filterByRange(payload.weekly_frequency, anchorDate);
+    const weeks = [...new Set(freq.map(r => r.date))].sort();
     const freqTraces = Object.entries(exerciseMeta).map(([key, meta]) => {
         const byWeek = Object.fromEntries(freq.filter(r => r.exercise === key).map(r => [r.date, r.sessions]));
         return {
@@ -295,13 +430,12 @@ function renderLifting(payload) {
     });
     Plotly.newPlot('lift-frequency-chart', freqTraces, baseLayout('Sessions per Week', { barmode: 'stack', showlegend: true, legend: { orientation: 'h', y: -0.2 } }), { responsive: true, displaylogo: false });
 
-    const totalPerWeek = {};
-    freq.forEach((r) => { totalPerWeek[r.date] = (totalPerWeek[r.date] || 0) + r.sessions; });
-    const totalRows = Object.entries(totalPerWeek).map(([date, sessions]) => ({ date, sessions })).sort((a, b) => a.date.localeCompare(b.date));
+    const totalPerWeekAll = {};
+    payload.weekly_frequency.forEach((r) => { totalPerWeekAll[r.date] = (totalPerWeekAll[r.date] || 0) + r.sessions; });
+    const totalRows = Object.entries(totalPerWeekAll).map(([date, sessions]) => ({ date, sessions })).sort((a, b) => a.date.localeCompare(b.date));
     if (totalRows.length) {
-        const endDate = coerceDate(totalRows[totalRows.length - 1].date);
-        const last30 = windowAvg(totalRows, 'sessions', 30, 0, endDate);
-        const prior30 = windowAvg(totalRows, 'sessions', 60, 30, endDate);
+        const last30 = windowAvg(totalRows, 'sessions', 30, 0, anchorDate);
+        const prior30 = windowAvg(totalRows, 'sessions', 60, 30, anchorDate);
         const trend = trendMeta(last30, prior30, 'higher');
         renderStatPanel('lift-frequency-stats', [
             { label: 'Sessions / Week (30d avg)', value: last30 === null ? '—' : last30.toFixed(1), trendText: trend.text, trendColor: trend.color },
@@ -310,6 +444,50 @@ function renderLifting(payload) {
         renderStatPanel('lift-frequency-stats', [{ label: 'Sessions / Week', value: '—', trendText: 'no data yet' }]);
     }
 }
+
+function renderActiveSport() {
+    if (fitnessState.running) renderRunning();
+    if (fitnessState.lifting) renderLifting();
+}
+
+function setDefaultCustomRange() {
+    const anchor = (fitnessState.running && fitnessState.running.runs.length)
+        ? fitnessState.running.runs
+        : [];
+    if (!anchor.length) return;
+    if (!document.getElementById('custom-start-date').value) {
+        document.getElementById('custom-start-date').value = anchor[0].date;
+    }
+    if (!document.getElementById('custom-end-date').value) {
+        document.getElementById('custom-end-date').value = anchor[anchor.length - 1].date;
+    }
+}
+
+document.getElementById('range-group').addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-days]');
+    if (!button) return;
+    document.querySelectorAll('#range-group button').forEach((b) => b.classList.remove('active'));
+    button.classList.add('active');
+    const days = button.dataset.days;
+
+    if (days === 'custom') {
+        fitnessState.rangeDays = 'custom';
+        document.getElementById('custom-range-row').style.display = '';
+        setDefaultCustomRange();
+        fitnessState.customStart = document.getElementById('custom-start-date').value;
+        fitnessState.customEnd = document.getElementById('custom-end-date').value;
+    } else {
+        fitnessState.rangeDays = Number(days);
+        document.getElementById('custom-range-row').style.display = 'none';
+    }
+    renderActiveSport();
+});
+
+document.getElementById('apply-custom-range').addEventListener('click', () => {
+    fitnessState.customStart = document.getElementById('custom-start-date').value;
+    fitnessState.customEnd = document.getElementById('custom-end-date').value;
+    renderActiveSport();
+});
 
 loadSport('running');
 loadedSports.add('running');

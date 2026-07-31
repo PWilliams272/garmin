@@ -138,6 +138,38 @@ class CuratedDataStore:
             return pd.DataFrame()
         return pd.concat(frames, ignore_index=True)
 
+    @staticmethod
+    def analyzed_points_path(dataset: str, metric: str) -> str:
+        return f"curated/analyzed/{dataset}/{metric}_points.parquet"
+
+    @staticmethod
+    def analyzed_trend_path(dataset: str, metric: str) -> str:
+        return f"curated/analyzed/{dataset}/{metric}_trend.parquet"
+
+    def load_analyzed_points(self, dataset: str, metric: str) -> pd.DataFrame:
+        return self._read_df_or_empty(self.analyzed_points_path(dataset, metric))
+
+    def write_analyzed_points(self, dataset: str, metric: str, df: pd.DataFrame) -> None:
+        if df.empty:
+            return
+        self.file_manager.write_df(
+            self._prepare_for_parquet(df),
+            self.analyzed_points_path(dataset, metric),
+            format="parquet",
+        )
+
+    def load_analyzed_trend(self, dataset: str, metric: str) -> pd.DataFrame:
+        return self._read_df_or_empty(self.analyzed_trend_path(dataset, metric))
+
+    def write_analyzed_trend(self, dataset: str, metric: str, df: pd.DataFrame) -> None:
+        if df.empty:
+            return
+        self.file_manager.write_df(
+            self._prepare_for_parquet(df),
+            self.analyzed_trend_path(dataset, metric),
+            format="parquet",
+        )
+
     def write_detailed_day(self, dataset: str, query_date: str, df: pd.DataFrame) -> None:
         if df.empty:
             return
