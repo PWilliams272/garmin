@@ -50,16 +50,6 @@
 
         <section class="dashboard-charts">
             <div class="card chart-card">
-                <div class="section-heading">Resting Heart Rate</div>
-                <div class="chart-host" id="heart-rate-chart"></div>
-                <div class="status-line" id="heart-rate-outliers"></div>
-            </div>
-            <div class="card chart-card">
-                <div class="section-heading">Daily Steps</div>
-                <div class="chart-host" id="steps-chart"></div>
-                <div class="status-line" id="steps-outliers"></div>
-            </div>
-            <div class="card chart-card">
                 <div class="section-heading" style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px 16px; border-bottom: 0; padding-bottom: 0; margin-bottom: 4px;">
                     <span>Weight</span>
                     <div style="display: flex; flex-wrap: wrap; gap: 4px 14px;">
@@ -80,6 +70,16 @@
                 <div style="border-bottom: 1px solid var(--lg-border); margin-bottom: 12px;"></div>
                 <div class="chart-host" id="weight-chart"></div>
                 <div class="status-line" id="weight-outliers"></div>
+            </div>
+            <div class="card chart-card">
+                <div class="section-heading">Resting Heart Rate</div>
+                <div class="chart-host" id="heart-rate-chart"></div>
+                <div class="status-line" id="heart-rate-outliers"></div>
+            </div>
+            <div class="card chart-card">
+                <div class="section-heading">Daily Steps</div>
+                <div class="chart-host" id="steps-chart"></div>
+                <div class="status-line" id="steps-outliers"></div>
             </div>
         </section>
     </div>
@@ -359,7 +359,7 @@ function renderAnalyzedChart(config, anchorDate) {
     // right edges (main+residual share their x-domain exactly); the
     // histogram starts immediately where that domain ends.
     const CONTENT_X_MAX = 0.82;
-    const HIST_X_START = 0.9;
+    const HIST_X_START = 0.835;
 
     const overlaysChecked = (config.overlays || []).filter((o) => document.getElementById(o.checkboxId).checked);
 
@@ -460,9 +460,9 @@ function renderAnalyzedChart(config, anchorDate) {
 function renderCharts() {
     if (!chartState.analyzed) return;
     const anchorDate = overallAnchorDate();
+    renderAnalyzedChart(chartConfig.weight, anchorDate);
     renderAnalyzedChart(chartConfig.heartRate, anchorDate);
     renderAnalyzedChart(chartConfig.steps, anchorDate);
-    renderAnalyzedChart(chartConfig.weight, anchorDate);
 }
 
 async function loadDashboard(source) {
