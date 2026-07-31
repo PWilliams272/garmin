@@ -400,44 +400,70 @@ class DataUpdater:
             f"{len(no_data_dates)} no_data, {len(denied_dates)} denied."
         )
 
-    def _update_running_curated(self, start_date: str = "2015-01-01") -> None:
-        dataset = "running"
+    def _activity_type_registry(self) -> list[dict]:
+        """Dataset name -> (Garmin typeKey, summary puller, optional per-activity detail puller).
+
+        Registry-driven so adding a sport is one entry here rather than a new
+        `_update_<sport>_curated` method. `summary_fn(start_date, end_date)` must
+        return a DataFrame with an `activity_id` column (matches ActivityPuller's
+        existing pull_running_summary/pull_strength_summary/pull_cardio_summary
+        shape). `detail_fn(activity_id)`, if given, is called once per activity
+        in the new/updated summary and written via write_activity_detail.
+
+        typeKeys beyond "running"/"strength_training" haven't been confirmed
+        against a live Garmin response yet -- verify/adjust these against a
+        real pull_activity_list() result if a sport's data doesn't come back
+        as expected.
+        """
+        cardio = self.activity_puller.pull_cardio_summary
+        return [
+            {"dataset": "running", "activity_type": "running", "summary_fn": self.activity_puller.pull_running_summary},
+            {
+                "dataset": "strength", "activity_type": "strength_training",
+                "summary_fn": self.activity_puller.pull_strength_summary,
+                "detail_fn": self.activity_puller.get_strength_workout,
+            },
+            {"dataset": "cycling", "activity_type": "cycling", "summary_fn": lambda s, e: cardio("cycling", s, e)},
+            {"dataset": "indoor_cycling", "activity_type": "indoor_cycling", "summary_fn": lambda s, e: cardio("indoor_cycling", s, e)},
+            {"dataset": "hiking", "activity_type": "hiking", "summary_fn": lambda s, e: cardio("hiking", s, e)},
+            {"dataset": "lap_swimming", "activity_type": "lap_swimming", "summary_fn": lambda s, e: cardio("lap_swimming", s, e)},
+            {"dataset": "open_water_swimming", "activity_type": "open_water_swimming", "summary_fn": lambda s, e: cardio("open_water_swimming", s, e)},
+            {"dataset": "hiit", "activity_type": "hiit", "summary_fn": lambda s, e: cardio("hiit", s, e)},
+            {"dataset": "bouldering", "activity_type": "bouldering", "summary_fn": lambda s, e: cardio("bouldering", s, e)},
+            {"dataset": "rock_climbing", "activity_type": "rock_climbing", "summary_fn": lambda s, e: cardio("rock_climbing", s, e)},
+            {"dataset": "tennis", "activity_type": "tennis", "summary_fn": lambda s, e: cardio("tennis", s, e)},
+            {"dataset": "pickleball", "activity_type": "pickleball", "summary_fn": lambda s, e: cardio("pickleball", s, e)},
+        ]
+
+    def _update_activity_curated(self, dataset: str, summary_fn, detail_fn=None, start_date: str = "2015-01-01") -> None:
         existing = self.curated_store.load_activity_summary(dataset)
         if not existing.empty and "date" in existing.columns:
             last_date = pd.to_datetime(existing["date"]).dt.date.max()
             start_date = last_date.strftime("%Y-%m-%d")
 
         today = datetime.today().date()
-        df = self.activity_puller.pull_running_summary(start_date, today.strftime("%Y-%m-%d"))
-        if df.empty:
-            print("No new running activities.")
-            return
-
-        merged = self.curated_store.merge_activity_summary(dataset, df)
-        print(f"Saved {len(merged)} curated running activities ({len(df)} new/updated).")
-
-    def _update_strength_curated(self, start_date: str = "2015-01-01") -> None:
-        dataset = "strength"
-        existing = self.curated_store.load_activity_summary(dataset)
-        if not existing.empty and "date" in existing.columns:
-            last_date = pd.to_datetime(existing["date"]).dt.date.max()
-            start_date = last_date.strftime("%Y-%m-%d")
-
-        today = datetime.today().date()
-        summary_df = self.activity_puller.pull_strength_summary(start_date, today.strftime("%Y-%m-%d"))
+        summary_df = summary_fn(start_date, today.strftime("%Y-%m-%d"))
         if summary_df.empty:
-            print("No new strength activities.")
+            print(f"No new {dataset} activities.")
             return
 
         merged = self.curated_store.merge_activity_summary(dataset, summary_df)
-        for activity_id in summary_df["activity_id"]:
-            sets_df = self.activity_puller.get_strength_workout(activity_id)
-            if sets_df.empty:
-                continue
-            sets_df["activity_id"] = activity_id
-            self.curated_store.write_activity_detail(dataset, activity_id, sets_df)
 
-        print(f"Saved {len(merged)} curated strength sessions ({len(summary_df)} new/updated).")
+        if detail_fn is not None:
+            for activity_id in summary_df["activity_id"]:
+                detail_df = detail_fn(activity_id)
+                if detail_df.empty:
+                    continue
+                detail_df["activity_id"] = activity_id
+                self.curated_store.write_activity_detail(dataset, activity_id, detail_df)
+
+        print(f"Saved {len(merged)} curated {dataset} activities ({len(summary_df)} new/updated).")
+
+    def _update_all_activities_curated(self) -> None:
+        for entry in self._activity_type_registry():
+            self._update_activity_curated(
+                entry["dataset"], entry["summary_fn"], entry.get("detail_fn"),
+            )
 
     def _resolve_model_class(self, class_or_name: str | type) -> type:
         if isinstance(class_or_name, str):
@@ -471,5 +497,4 @@ class DataUpdater:
             self.update(model_class)
 
         if self.curated_store is not None:
-            self._update_running_curated()
-            self._update_strength_curated()
+            self._update_all_activities_curated()

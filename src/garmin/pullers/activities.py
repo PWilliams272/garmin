@@ -41,8 +41,42 @@ class ActivityPuller:
             ]
         return results
 
+    def pull_cardio_summary(self, activity_type: str, start_date: str, end_date: str) -> pd.DataFrame:
+        """One row per activity of `activity_type`: distance, pace, HR, elevation, calories.
+
+        Generic across any Garmin cardio/distance-based typeKey (cycling, hiking,
+        lap_swimming, open_water_swimming, indoor_running, ...) -- fields not present
+        for a given type (e.g. distance on an indoor session) come back as None
+        rather than raising, same as the existing running/strength summaries.
+        """
+        activities = self.pull_activity_list(start_date, end_date, activity_types={activity_type})
+        rows = []
+        for a in activities:
+            distance_m = a.get("distance")
+            duration_s = a.get("duration")
+            avg_speed = a.get("averageSpeed")
+            elevation_gain_m = a.get("elevationGain")
+            rows.append({
+                "activity_id": str(a["activityId"]),
+                "date": pd.to_datetime(a["startTimeLocal"]).date(),
+                "name": a.get("activityName"),
+                "distance_mi": round(distance_m / METERS_PER_MILE, 2) if distance_m is not None else None,
+                "duration_min": round(duration_s / 60, 1) if duration_s is not None else None,
+                "pace_min_per_mile": round((METERS_PER_MILE / avg_speed) / 60, 2) if avg_speed else None,
+                "avg_hr": a.get("averageHR"),
+                "max_hr": a.get("maxHR"),
+                "elevation_gain_ft": round(elevation_gain_m / METERS_PER_FOOT, 1) if elevation_gain_m is not None else None,
+                "calories": a.get("calories"),
+            })
+        return pd.DataFrame(rows)
+
     def pull_running_summary(self, start_date: str, end_date: str) -> pd.DataFrame:
-        """One row per running activity: distance, pace, cadence, HR, elevation."""
+        """One row per running activity: distance, pace, cadence, HR, elevation.
+
+        Kept as its own method (rather than pull_cardio_summary("running", ...))
+        so it stays a single pull_activity_list call -- Garmin rate-limits these
+        pulls, so this avoids doubling the list request just to add cadence.
+        """
         activities = self.pull_activity_list(start_date, end_date, activity_types={"running"})
         rows = []
         for a in activities:
