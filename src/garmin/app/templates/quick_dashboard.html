@@ -50,26 +50,24 @@
 
         <section class="dashboard-charts">
             <div class="card chart-card">
-                <div class="section-heading" style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px 16px; border-bottom: 0; padding-bottom: 0; margin-bottom: 4px;">
-                    <span>Weight</span>
-                    <div style="display: flex; flex-wrap: wrap; gap: 4px 14px;">
-                        <label style="display: inline-flex; align-items: center; gap: 6px; text-transform: none; letter-spacing: normal; font-weight: 600; color: var(--lg-text-2); cursor: pointer;">
-                            <input type="checkbox" id="overlay-body-fat">
-                            Body Fat %
-                        </label>
-                        <label style="display: inline-flex; align-items: center; gap: 6px; text-transform: none; letter-spacing: normal; font-weight: 600; color: var(--lg-text-2); cursor: pointer;">
-                            <input type="checkbox" id="overlay-bone-mass">
-                            Bone Mass
-                        </label>
-                        <label style="display: inline-flex; align-items: center; gap: 6px; text-transform: none; letter-spacing: normal; font-weight: 600; color: var(--lg-text-2); cursor: pointer;">
-                            <input type="checkbox" id="overlay-muscle-mass">
-                            Muscle Mass
-                        </label>
-                    </div>
-                </div>
-                <div style="border-bottom: 1px solid var(--lg-border); margin-bottom: 12px;"></div>
+                <div class="section-heading">Weight</div>
                 <div class="chart-host" id="weight-chart"></div>
                 <div class="status-line" id="weight-outliers"></div>
+            </div>
+            <div class="card chart-card">
+                <div class="section-heading">Body Fat %</div>
+                <div class="chart-host" id="body-fat-chart"></div>
+                <div class="status-line" id="body-fat-outliers"></div>
+            </div>
+            <div class="card chart-card">
+                <div class="section-heading">Muscle Mass</div>
+                <div class="chart-host" id="muscle-mass-chart"></div>
+                <div class="status-line" id="muscle-mass-outliers"></div>
+            </div>
+            <div class="card chart-card">
+                <div class="section-heading">Bone Mass</div>
+                <div class="chart-host" id="bone-mass-chart"></div>
+                <div class="status-line" id="bone-mass-outliers"></div>
             </div>
             <div class="card chart-card">
                 <div class="section-heading">Resting Heart Rate</div>
@@ -119,11 +117,24 @@ const chartConfig = {
         metricKey: 'weight', colorToken: '--lg-success', yAxisTitle: 'Weight (lb)',
         format: (v) => v === null ? '—' : v.toFixed(1) + ' lb',
         betterWhen: null,
-        overlays: [
-            { checkboxId: 'overlay-body-fat', metricKey: 'body_fat', colorToken: '--lg-warning', yAxisTitle: 'Body Fat (%)' },
-            { checkboxId: 'overlay-bone-mass', metricKey: 'bone_mass', colorToken: '--lg-danger', yAxisTitle: 'Bone Mass (lb)' },
-            { checkboxId: 'overlay-muscle-mass', metricKey: 'muscle_mass', colorToken: '--lg-info', yAxisTitle: 'Muscle Mass (lb)' },
-        ],
+    },
+    bodyFat: {
+        chartId: 'body-fat-chart', outlierId: 'body-fat-outliers',
+        metricKey: 'body_fat', colorToken: '--lg-warning', yAxisTitle: 'Body Fat (%)',
+        format: (v) => v === null ? '—' : v.toFixed(1) + '%',
+        betterWhen: 'lower',
+    },
+    muscleMass: {
+        chartId: 'muscle-mass-chart', outlierId: 'muscle-mass-outliers',
+        metricKey: 'muscle_mass', colorToken: '--lg-info', yAxisTitle: 'Muscle Mass (lb)',
+        format: (v) => v === null ? '—' : v.toFixed(1) + ' lb',
+        betterWhen: 'higher',
+    },
+    boneMass: {
+        chartId: 'bone-mass-chart', outlierId: 'bone-mass-outliers',
+        metricKey: 'bone_mass', colorToken: '--lg-danger', yAxisTitle: 'Bone Mass (lb)',
+        format: (v) => v === null ? '—' : v.toFixed(2) + ' lb',
+        betterWhen: null,
     },
 };
 
@@ -212,6 +223,10 @@ function buildStatSummary(config, allPoints, fullTrend, anchorDate) {
     if (fullTrend.length) {
         const nowVal = fullTrend[fullTrend.length - 1].mean;
         lines.push({ label: 'Trend Now', value: config.format(nowVal) });
+        const dayToDayStd = fullTrend[fullTrend.length - 1].day_to_day_std;
+        if (dayToDayStd !== undefined && dayToDayStd !== null && !Number.isNaN(dayToDayStd)) {
+            lines.push({ label: 'Typical Day-to-Day', value: `± ${config.format(dayToDayStd)}` });
+        }
         [14, 30, 60].forEach((days) => {
             const target = new Date(anchorDate);
             target.setDate(target.getDate() - days);
@@ -228,7 +243,7 @@ function statSummaryAnnotations(lines) {
     const labelColor = token('--lg-text-3');
     const valueColorDefault = token('--lg-text');
     return lines.map((line, idx) => ({
-        xref: 'paper', yref: 'paper', x: 0.845, y: 0.97 - idx * 0.115,
+        xref: 'paper', yref: 'paper', x: 0.845, y: 0.97 - idx * 0.095,
         xanchor: 'left', yanchor: 'top', showarrow: false, align: 'left',
         text: `<span style="font-size:9px;letter-spacing:0.06em;color:${labelColor}">${line.label.toUpperCase()}</span><br>`
             + `<span style="font-size:13px;font-weight:700;color:${line.color || valueColorDefault}">${line.value}</span>`,
@@ -361,15 +376,10 @@ function renderAnalyzedChart(config, anchorDate) {
     const CONTENT_X_MAX = 0.82;
     const HIST_X_START = 0.835;
 
-    const overlaysChecked = (config.overlays || []).filter((o) => document.getElementById(o.checkboxId).checked);
-
     // Last/avg/trend-window stats live in the white space right of the main
     // plot -- computed from the full (unfiltered) trend so lookback windows
-    // work regardless of the on-screen range. Skipped when overlays are
-    // checked, since that same space is used for overlay axis labels then.
-    const annotations = overlaysChecked.length
-        ? []
-        : statSummaryAnnotations(buildStatSummary(config, entry.points || [], entry.trend_sts || [], anchorDate));
+    // work regardless of the on-screen range.
+    const annotations = statSummaryAnnotations(buildStatSummary(config, entry.points || [], entry.trend_sts || [], anchorDate));
 
     const layout = baseLayout(config.yAxisTitle, {
         margin: { l: 60, r: 16, t: 8, b: 36 },
@@ -425,35 +435,6 @@ function renderAnalyzedChart(config, anchorDate) {
         ticks: 'outside', tickcolor: borderColor, ticklen: 4,
     };
 
-    if (overlaysChecked.length > 0) {
-        const overlayAxisGap = (1 - CONTENT_X_MAX) / overlaysChecked.length;
-        overlaysChecked.forEach((overlay, idx) => {
-            const axisNum = idx + 2;
-            const overlayEntry = (chartState.analyzed && chartState.analyzed[overlay.metricKey]) || { points: [], trend_gp: [] };
-            const overlayPoints = filterByRange(overlayEntry.points || [], anchorDate).filter((p) => p.quality_tier !== 'hard');
-            const overlayTrend = filterByRange(overlayEntry.trend_gp || [], anchorDate);
-            const overlayColor = token(overlay.colorToken);
-
-            traces.push({
-                x: overlayPoints.map(p => p.date), y: overlayPoints.map(p => p[overlay.metricKey]),
-                type: 'scatter', mode: 'markers', marker: { color: overlayColor, size: 4, opacity: 0.3 },
-                yaxis: 'y' + axisNum, hovertemplate: '%{x}<br>%{y}<extra></extra>',
-            });
-            if (overlayTrend.length) {
-                traces.push({
-                    x: overlayTrend.map(t => t.date), y: overlayTrend.map(t => t.mean),
-                    type: 'scatter', mode: 'lines', line: { color: overlayColor, width: 2 }, yaxis: 'y' + axisNum,
-                });
-            }
-            layout['yaxis' + axisNum] = {
-                overlaying: 'y', side: 'right', anchor: 'free', position: Math.min(1, CONTENT_X_MAX + overlayAxisGap * (idx + 1)),
-                gridcolor: 'transparent', zeroline: false,
-                title: { text: overlay.yAxisTitle, font: { color: overlayColor, size: 11 } },
-                tickfont: { color: overlayColor },
-            };
-        });
-    }
-
     Plotly.react(config.chartId, traces, layout, { responsive: true, displaylogo: false, modeBarButtonsToRemove: ['lasso2d', 'select2d'] });
 
     const hardPoints = filterByRange(allPoints, anchorDate).filter((p) => p.quality_tier === 'hard');
@@ -471,6 +452,9 @@ function renderCharts() {
     if (!chartState.analyzed) return;
     const anchorDate = overallAnchorDate();
     renderAnalyzedChart(chartConfig.weight, anchorDate);
+    renderAnalyzedChart(chartConfig.bodyFat, anchorDate);
+    renderAnalyzedChart(chartConfig.muscleMass, anchorDate);
+    renderAnalyzedChart(chartConfig.boneMass, anchorDate);
     renderAnalyzedChart(chartConfig.heartRate, anchorDate);
     renderAnalyzedChart(chartConfig.steps, anchorDate);
 }
@@ -537,12 +521,6 @@ document.getElementById('apply-custom-range').addEventListener('click', () => {
 
 document.getElementById('source-select').addEventListener('change', (event) => {
     loadDashboard(event.target.value).catch((error) => setStatus(error.message));
-});
-
-chartConfig.weight.overlays.forEach((overlay) => {
-    document.getElementById(overlay.checkboxId).addEventListener('change', () => {
-        renderAnalyzedChart(chartConfig.weight, overallAnchorDate());
-    });
 });
 
 loadDashboard(chartState.source).catch((error) => {
