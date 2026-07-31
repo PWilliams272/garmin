@@ -18,8 +18,12 @@ def test_quick_dashboard_page_renders() -> None:
     assert b'chart-host' in response.data
 
 
-def test_quick_dashboard_data_returns_analyzed_payload(monkeypatch) -> None:
+def test_quick_dashboard_data_returns_analyzed_payload(tmp_path, monkeypatch) -> None:
     app = create_app()
+    # No viewer-cache file in an empty tmp_dir -- _cached_or_live falls
+    # through to the monkeypatched builder below rather than reading
+    # whatever real cache this machine happens to have on disk.
+    monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
 
     fake_payload = {
         'analyzed': {
@@ -110,8 +114,9 @@ def test_activities_overview_from_df_aggregates_by_type_and_week() -> None:
     assert len(payload['recent_activities']) == 3
 
 
-def test_activities_overview_data_uses_real_payload_when_available(monkeypatch) -> None:
+def test_activities_overview_data_uses_real_payload_when_available(tmp_path, monkeypatch) -> None:
     app = create_app()
+    monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
     fake_payload = {
         'activity_types': ['running'],
         'weekly_by_type': [],
@@ -129,8 +134,9 @@ def test_activities_overview_data_uses_real_payload_when_available(monkeypatch) 
     assert payload['kpis']['total_activities'] == 5
 
 
-def test_activities_overview_data_falls_back_to_mock_when_no_real_data(monkeypatch) -> None:
+def test_activities_overview_data_falls_back_to_mock_when_no_real_data(tmp_path, monkeypatch) -> None:
     app = create_app()
+    monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
     monkeypatch.setattr(routes_module, '_activities_real_payload', lambda source='local': None)
 
     with app.test_client() as client:
@@ -223,6 +229,30 @@ def test_data_status_payload_aggregates_weekly_by_majority_status(tmp_path, monk
     later_week = payload['dates'][-1]
     if later_week != '2024-01-09':
         assert steps['statuses'][idx[later_week]] == codes['untouched']
+
+
+def test_cached_or_live_prefers_cache_over_build_fn(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
+    routes_module.curated_local.write_viewer_cache('quick_dashboard_local', {'from': 'cache'})
+
+    build_fn_calls = []
+
+    def build_fn():
+        build_fn_calls.append(1)
+        return {'from': 'live'}
+
+    result = routes_module._cached_or_live('quick_dashboard_local', 'local', build_fn)
+
+    assert result == {'from': 'cache'}
+    assert build_fn_calls == []
+
+
+def test_cached_or_live_falls_back_when_no_cache(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
+
+    result = routes_module._cached_or_live('quick_dashboard_local', 'local', lambda: {'from': 'live'})
+
+    assert result == {'from': 'live'}
 
 
 def test_data_status_payload_empty_when_nothing_pulled(tmp_path, monkeypatch) -> None:

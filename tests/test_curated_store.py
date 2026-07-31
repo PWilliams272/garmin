@@ -12,6 +12,19 @@ from garmin.io.models import HeartRateDetailed, Steps
 from garmin.updaters import DataUpdater
 
 
+def test_viewer_cache_round_trips_and_misses_cleanly(tmp_path) -> None:
+    store = CuratedDataStore(
+        file_manager=FileManager(environment="local", local_dir=str(tmp_path))
+    )
+
+    assert store.load_viewer_cache("quick_dashboard_local") is None
+
+    payload = {"analyzed": {"weight": {"points": [1, 2, 3]}}, "source": "local"}
+    store.write_viewer_cache("quick_dashboard_local", payload)
+
+    assert store.load_viewer_cache("quick_dashboard_local") == payload
+
+
 def test_curated_store_merges_daily_rows_by_date(tmp_path) -> None:
     store = CuratedDataStore(
         file_manager=FileManager(environment="local", local_dir=str(tmp_path))

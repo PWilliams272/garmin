@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pandas as pd
 from botocore.exceptions import ClientError
 
@@ -170,6 +172,30 @@ class CuratedDataStore:
             self.analyzed_trend_path(dataset, metric, kind),
             format="parquet",
         )
+
+    @staticmethod
+    def viewer_cache_path(name: str) -> str:
+        return f"viewer_cache/{name}.json"
+
+    def load_viewer_cache(self, name: str) -> dict | None:
+        """Read a precomputed web-response JSON blob (written by
+        garmin.scripts.manual_build_viewer_cache), or None if it hasn't been
+        built yet. A cache miss is not an error -- callers fall back to
+        assembling the payload live from curated/analyzed parquet.
+        """
+        try:
+            text = self.file_manager.read_text(self.viewer_cache_path(name))
+        except FileNotFoundError:
+            return None
+        except ClientError as exc:
+            error_code = exc.response.get("Error", {}).get("Code")
+            if error_code in {"404", "NoSuchKey"}:
+                return None
+            raise
+        return json.loads(text)
+
+    def write_viewer_cache(self, name: str, payload: dict) -> None:
+        self.file_manager.write_text(json.dumps(payload), self.viewer_cache_path(name))
 
     def write_detailed_day(self, dataset: str, query_date: str, df: pd.DataFrame) -> None:
         if df.empty:

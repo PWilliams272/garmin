@@ -81,6 +81,25 @@ def _health_analyzed_payload(source: str = 'local') -> dict | None:
     return {'analyzed': analyzed}
 
 
+def _cached_or_live(cache_name: str, source: str, build_fn):
+    """Try the precomputed viewer-cache blob first (built offline by
+    garmin.scripts.manual_build_viewer_cache -- one JSON write per page per
+    source), falling back to assembling the payload live from curated/
+    analyzed/ parquet if no cache exists yet.
+
+    This matters most for source='s3': each of the payload builders below
+    does a dozen-plus individual file_manager.read_df calls, and against S3
+    every one of those is its own network round trip (see file_manager.py --
+    no batching, no connection reuse across calls). Reading one cached JSON
+    blob instead turns that into a single request.
+    """
+    store = curated_s3 if source == 's3' else curated_local
+    cached = store.load_viewer_cache(cache_name)
+    if cached is not None:
+        return cached
+    return build_fn()
+
+
 # Every intraday dataset that tracks per-day pull status via
 # curated/metadata/detailed_status/<dataset>.parquet (fetched/no_data/denied),
 # written by DataUpdater._update_detailed_time_series_curated.
@@ -624,7 +643,7 @@ def quick_dashboard_data():
         source = 'local'
 
     try:
-        payload = _health_analyzed_payload(source=source)
+        payload = _cached_or_live(f'quick_dashboard_{source}', source, lambda: _health_analyzed_payload(source=source))
         if payload is None:
             return jsonify({
                 'source': source,
@@ -659,12 +678,12 @@ def api_fitness_data():
     try:
         is_mock = False
         if sport == 'running':
-            payload = _running_real_payload(source=source)
+            payload = _cached_or_live(f'fitness_running_{source}', source, lambda: _running_real_payload(source=source))
             if payload is None:
                 payload = _running_payload()
                 is_mock = True
         elif sport == 'lifting':
-            payload = _lifting_real_payload(source=source)
+            payload = _cached_or_live(f'fitness_lifting_{source}', source, lambda: _lifting_real_payload(source=source))
             if payload is None:
                 payload = _lifting_payload()
                 is_mock = True
@@ -693,7 +712,7 @@ def api_activities_overview_data():
 
     try:
         is_mock = False
-        payload = _activities_real_payload(source=source)
+        payload = _cached_or_live(f'activities_overview_{source}', source, lambda: _activities_real_payload(source=source))
         if payload is None:
             payload = _activities_overview_payload()
             is_mock = True
@@ -748,7 +767,7 @@ def api_data_status_data():
         source = 'local'
 
     try:
-        payload = _data_status_payload(source=source)
+        payload = _cached_or_live(f'data_status_{source}', source, lambda: _data_status_payload(source=source))
         payload['source'] = source
         return jsonify(payload)
     except Exception as e:
