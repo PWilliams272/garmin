@@ -211,7 +211,8 @@ td.num, th.num {
 .collapsible-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
+  gap: 8px;
   cursor: pointer;
   user-select: none;
   border-radius: var(--lg-radius-md);
@@ -224,17 +225,25 @@ td.num, th.num {
 }
 
 .collapsible-header:hover .collapse-chevron {
-  color: var(--lg-text);
+  border-color: var(--lg-text);
 }
 
+/* CSS-drawn chevron ("v") rather than a unicode glyph, which renders as a
+   small filled triangle in most fonts and reads as decoration, not a
+   control. Two borders meeting at 45deg point down when expanded; rotating
+   the whole thing -90deg points it right when collapsed. */
 .collapse-chevron {
-  font-size: 13px;
-  color: var(--lg-text-2);
-  transition: transform var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--lg-text-2);
+  border-bottom: 2px solid var(--lg-text-2);
+  transform: rotate(45deg);
+  transition: transform var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
 
 .chart-card.collapsed .collapse-chevron {
-  transform: rotate(-90deg);
+  transform: rotate(-45deg);
 }
 
 .chart-card.collapsed .chart-body {
