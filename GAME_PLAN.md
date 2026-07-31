@@ -1,6 +1,6 @@
 # Garmin — Next Phase Game Plan
 
-Written 2026-07-30 as a **complement to** `AI_AGENT_HANDOFF_2026-07-30.md`, not a replacement. Read that file first — it covers the just-completed Lambda memory/timeout fix, the auth model, storage model, and deploy mechanics in detail, and remains the authoritative operational reference. This file covers the next phase of work: five goals from the project owner, going beyond keeping the current pipeline healthy.
+Complements `GARMIN_HANDOFF.md` (AWS/ops reference) and `CLAUDE.md` (architecture/rules) — this file covers the next phase of work: five goals from the project owner, going beyond keeping the current pipeline healthy.
 
 ## The Five Goals, In Order
 
@@ -12,7 +12,7 @@ Written 2026-07-30 as a **complement to** `AI_AGENT_HANDOFF_2026-07-30.md`, not 
 
 ## Goal 1 — Already Substantially Done
 
-`AI_AGENT_HANDOFF_2026-07-30.md` already covers this: the Lambda's 128MB→512MB timeout fix is deployed and verified, a state-leak bug in the detailed puller is fixed, and detailed timing logs are live. Its own "Recommended Next Tasks" section (monitor scheduled runs, watch for real auth failures vs. infra timing, packaging cleanup) is still the right list for finishing this goal — don't duplicate it here, just execute it before moving too far into goals 2-5. The 8 curated datasets (`health_stats`, `steps`, `sleep`, `stress`, `body_battery`, `heart_rate`, `hrv`, `respiration`) are confirmed actively updating daily as of 2026-07-29.
+See `GARMIN_HANDOFF.md` for the verified live state: the Lambda's 128MB→512MB timeout fix is deployed and verified, a state-leak bug in the detailed puller is fixed, and detailed timing logs are live. Remaining work: keep monitoring scheduled runs, watch for real auth failures vs. infra timing, and continue packaging cleanup. The 8 curated datasets (`health_stats`, `steps`, `sleep`, `stress`, `body_battery`, `heart_rate`, `hrv`, `respiration`) are confirmed actively updating daily as of 2026-07-29.
 
 ## Goal 2 — Workouts/Activities: Confirmed Genuinely Unstarted
 
@@ -26,15 +26,9 @@ To actually build this out:
 
 ## Goal 3 — Bokeh → Plotly Migration
 
-Confirmed scope via direct search — Bokeh is used in:
-- `src/garmin/dashboard_curated.py` (79 lines)
-- `src/garmin/analysis/analysis.py` (76 lines)
-- `src/garmin/analysis/plotting.py` (196 lines — the bulk of it)
-- `src/garmin/app/routes.py` (167 lines, Flask routes serving the Bokeh dashboard)
-- Templates: `curated_metrics_dashboard.html`, `base.html`, `metrics_dashboard.html`
-- `src/garmin/scripts/manual_update_dashboard.py`
+**Health tab: done.** `/quick_dashboard` is a new kaya-style Plotly app — precomputed chart-ready JSON served by `/api/quick_dashboard_data`, no server-side rendering, no live model fitting (the GP/STS trend models run offline via `manual_analyze_metrics.py`). All 6 health metrics (weight, body fat, muscle mass, bone mass, resting HR, steps) have their own collapsible chart card with quality-tiered points, an STS trend with predictive bands, a residual strip + histogram, and a stat summary (last reading, trend now, typical day-to-day variability, 14/30/60-day trend arrows).
 
-~518 lines of actual Bokeh-touching code total — real but bounded. The goal isn't just "swap the charting library" — it's explicitly **prep work for a new kaya-style app**, so design the Plotly migration with that end state in mind: charts should end up structured the way kaya's `viewer_payloads.py` builds chart-ready JSON payloads (precomputed, served as static data to a frontend), not just a Bokeh-to-Plotly line-for-line port still wired through Flask server-side rendering.
+**Not yet migrated**: `/metrics_dashboard` and `/curated_metrics_dashboard` are still the old Bokeh routes (`src/garmin/dashboard_curated.py`, `src/garmin/analysis/plotting.py`, `src/garmin/analysis/analysis.py`, templates `curated_metrics_dashboard.html`/`metrics_dashboard.html`). Fitness/Activities/Analytics tabs on the new app exist as UI shells with mock data — real activity ingestion (Goal 2) is the blocker for making those real. Once Goal 2 lands and those tabs are real, retire the old Bokeh routes/templates rather than running both indefinitely.
 
 ## Goal 4 — `garmin.peterwilliams.dev`, Matching Kaya's Pattern Exactly
 
@@ -50,6 +44,6 @@ Open-ended, not scoped in detail here — genuinely depends on what Goal 2's exp
 
 1. Finish Goal 1's monitoring/verification (already mostly done, just confirm scheduled runs stay healthy).
 2. Goal 2: design and build activities/workouts support, retire legacy DB/S3 paths along the way.
-3. Goal 3: migrate to Plotly with the future app's data shape in mind, not as an isolated swap.
+3. Goal 3: health metrics done; finish once Goal 2 gives the Fitness/Activities tabs real data to replace their mocks, then retire the old Bokeh routes.
 4. Goal 4: build and deploy the subdomain app once 2-3 give it something real to show; deprecate the submodule integration in `aws_flask_site` at the same time, don't run both indefinitely.
 5. Goal 5: pursue once the richer dataset (especially activities) exists.
