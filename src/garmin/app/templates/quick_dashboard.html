@@ -12,58 +12,96 @@
         </div>
     </header>
 
-    <section class="card chart-card">
-        <div class="control-grid">
-            <label class="inline-select-control">
-                Data Source
-                <select id="source-select">
-                    <option value="local" {% if source == 'local' %}selected{% endif %}>Local Curated Files</option>
-                    <option value="s3" {% if source == 's3' %}selected{% endif %}>S3 Curated Files</option>
-                </select>
-            </label>
-            <label class="inline-select-control">
-                Range
-                <div class="range-group" id="range-group">
-                    <button type="button" data-days="7">7D</button>
-                    <button type="button" data-days="30">30D</button>
-                    <button type="button" data-days="90" class="active">90D</button>
-                    <button type="button" data-days="365">1Y</button>
-                    <button type="button" data-days="all">All</button>
+    <div class="dashboard-layout">
+        <aside class="dashboard-sidebar">
+            <section class="card chart-card">
+                <div class="section-heading">Setup</div>
+                <div class="control-grid control-grid-stack">
+                    <label class="inline-select-control">
+                        Data Source
+                        <select id="source-select">
+                            <option value="local" {% if source == 'local' %}selected{% endif %}>Local Curated Files</option>
+                            <option value="s3" {% if source == 's3' %}selected{% endif %}>S3 Curated Files</option>
+                        </select>
+                    </label>
+                    <label class="inline-select-control">
+                        Range
+                        <div class="range-group range-group-stack" id="range-group">
+                            <button type="button" data-days="7">7D</button>
+                            <button type="button" data-days="30">30D</button>
+                            <button type="button" data-days="90">90D</button>
+                            <button type="button" data-days="180" class="active">180D</button>
+                            <button type="button" data-days="365">1Y</button>
+                            <button type="button" data-days="730">2Y</button>
+                            <button type="button" data-days="custom">Custom</button>
+                        </div>
+                    </label>
                 </div>
-            </label>
-        </div>
-        <div class="status-line" id="dashboard-status" style="margin-top: 12px;">Loading timeseries…</div>
-    </section>
+                <div class="control-grid control-grid-stack" id="custom-range-row" style="display: none; margin-top: 12px;">
+                    <label class="inline-select-control">
+                        Start Date
+                        <input id="custom-start-date" type="date">
+                    </label>
+                    <label class="inline-select-control">
+                        End Date
+                        <input id="custom-end-date" type="date">
+                    </label>
+                    <label class="inline-select-control">
+                        &nbsp;
+                        <button id="apply-custom-range" type="button" class="ghost-button">Apply</button>
+                    </label>
+                </div>
+                <div class="status-line" id="dashboard-status" style="margin-top: 12px;">Loading timeseries…</div>
+            </section>
+        </aside>
 
-    <section class="kpi-grid">
-        <div class="card kpi-card">
-            <div class="kpi-label">Latest Resting HR</div>
-            <div class="kpi-value" id="kpi-heart-rate">—</div>
-        </div>
-        <div class="card kpi-card">
-            <div class="kpi-label">Latest Steps</div>
-            <div class="kpi-value" id="kpi-steps">—</div>
-        </div>
-        <div class="card kpi-card">
-            <div class="kpi-label">Latest Weight</div>
-            <div class="kpi-value" id="kpi-weight">—</div>
-        </div>
-    </section>
+        <section class="dashboard-charts">
+            <div class="card chart-card">
+                <div class="section-heading">Resting Heart Rate</div>
+                <div class="chart-host" id="heart-rate-chart"></div>
+            </div>
+            <div class="card chart-card">
+                <div class="section-heading">Daily Steps</div>
+                <div class="chart-host" id="steps-chart"></div>
+            </div>
+            <div class="card chart-card">
+                <div class="section-heading" style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px 16px; border-bottom: 0; padding-bottom: 0; margin-bottom: 4px;">
+                    <span>Weight</span>
+                    <div style="display: flex; flex-wrap: wrap; gap: 4px 14px;">
+                        <label style="display: inline-flex; align-items: center; gap: 6px; text-transform: none; letter-spacing: normal; font-weight: 600; color: var(--lg-text-2); cursor: pointer;">
+                            <input type="checkbox" id="overlay-body-fat">
+                            Body Fat %
+                        </label>
+                        <label style="display: inline-flex; align-items: center; gap: 6px; text-transform: none; letter-spacing: normal; font-weight: 600; color: var(--lg-text-2); cursor: pointer;">
+                            <input type="checkbox" id="overlay-bone-mass">
+                            Bone Mass
+                        </label>
+                        <label style="display: inline-flex; align-items: center; gap: 6px; text-transform: none; letter-spacing: normal; font-weight: 600; color: var(--lg-text-2); cursor: pointer;">
+                            <input type="checkbox" id="overlay-muscle-mass">
+                            Muscle Mass
+                        </label>
+                    </div>
+                </div>
+                <div style="border-bottom: 1px solid var(--lg-border); margin-bottom: 12px;"></div>
+                <div class="chart-host" id="weight-chart"></div>
+            </div>
+        </section>
 
-    <section class="chart-grid">
-        <div class="card chart-card">
-            <div class="section-heading">Resting Heart Rate</div>
-            <div class="chart-host" id="heart-rate-chart"></div>
-        </div>
-        <div class="card chart-card">
-            <div class="section-heading">Daily Steps</div>
-            <div class="chart-host" id="steps-chart"></div>
-        </div>
-        <div class="card chart-card">
-            <div class="section-heading">Weight</div>
-            <div class="chart-host" id="weight-chart"></div>
-        </div>
-    </section>
+        <aside class="dashboard-summary">
+            <div class="card kpi-card">
+                <div class="kpi-label">Latest Resting HR</div>
+                <div class="kpi-value" id="kpi-heart-rate">—</div>
+            </div>
+            <div class="card kpi-card">
+                <div class="kpi-label">Latest Steps</div>
+                <div class="kpi-value" id="kpi-steps">—</div>
+            </div>
+            <div class="card kpi-card">
+                <div class="kpi-label">Latest Weight</div>
+                <div class="kpi-value" id="kpi-weight">—</div>
+            </div>
+        </aside>
+    </div>
 </div>
 
 <script>
@@ -74,7 +112,9 @@ function token(name) {
 const chartState = {
     rows: [],
     source: {{ source|tojson }},
-    rangeDays: 90,
+    rangeDays: 180,
+    customStart: null,
+    customEnd: null,
 };
 
 const chartConfig = {
@@ -84,6 +124,7 @@ const chartConfig = {
         maKey: 'resting_hr_ma',
         colorToken: '--lg-gold',
         kpiId: 'kpi-heart-rate',
+        yAxisTitle: 'bpm',
         format: (v) => v === null ? '—' : Math.round(v) + ' bpm',
     },
     steps: {
@@ -92,6 +133,7 @@ const chartConfig = {
         maKey: 'total_steps_ma',
         colorToken: '--lg-highlight',
         kpiId: 'kpi-steps',
+        yAxisTitle: 'steps',
         format: (v) => v === null ? '—' : Math.round(v).toLocaleString(),
     },
     weight: {
@@ -100,7 +142,31 @@ const chartConfig = {
         maKey: 'weight_ma',
         colorToken: '--lg-success',
         kpiId: 'kpi-weight',
+        yAxisTitle: 'lb',
         format: (v) => v === null ? '—' : v.toFixed(1) + ' lb',
+        overlays: [
+            {
+                checkboxId: 'overlay-body-fat',
+                key: 'body_fat',
+                maKey: 'body_fat_ma',
+                colorToken: '--lg-warning',
+                yAxisTitle: 'body fat %',
+            },
+            {
+                checkboxId: 'overlay-bone-mass',
+                key: 'bone_mass',
+                maKey: 'bone_mass_ma',
+                colorToken: '--lg-danger',
+                yAxisTitle: 'bone mass (lb)',
+            },
+            {
+                checkboxId: 'overlay-muscle-mass',
+                key: 'muscle_mass',
+                maKey: 'muscle_mass_ma',
+                colorToken: '--lg-info',
+                yAxisTitle: 'muscle mass (lb)',
+            },
+        ],
     },
 };
 
@@ -113,9 +179,22 @@ function coerceDate(value) {
 }
 
 function filteredRows() {
-    if (!chartState.rows.length || chartState.rangeDays === 'all') {
+    if (!chartState.rows.length) {
         return chartState.rows;
     }
+
+    if (chartState.rangeDays === 'custom') {
+        const startDate = chartState.customStart ? coerceDate(chartState.customStart) : null;
+        const endDate = chartState.customEnd ? coerceDate(chartState.customEnd) : null;
+        return chartState.rows.filter((row) => {
+            const rowDate = coerceDate(row.date);
+            if (!rowDate) return false;
+            if (startDate && rowDate < startDate) return false;
+            if (endDate && rowDate > endDate) return false;
+            return true;
+        });
+    }
+
     const endDate = coerceDate(chartState.rows[chartState.rows.length - 1].date);
     const startDate = new Date(endDate);
     startDate.setDate(startDate.getDate() - chartState.rangeDays);
@@ -137,46 +216,86 @@ function updateKpi(config, rows) {
     document.getElementById(config.kpiId).textContent = '—';
 }
 
-function renderSingleChart(config) {
-    const rows = filteredRows();
-    const x = rows.map((row) => row.date);
-    const yRaw = rows.map((row) => row[config.key]);
-    const yMa = rows.map((row) => row[config.maKey]);
-    const color = token(config.colorToken);
-    const textColor = token('--lg-text-2');
-    const borderColor = token('--lg-border');
-
+function seriesTraces(rows, x, key, maKey, colorToken, yaxis) {
+    const color = token(colorToken);
     const pointsTrace = {
         x: x,
-        y: yRaw,
+        y: rows.map((row) => row[key]),
         type: 'scatter',
         mode: 'markers',
         marker: { color: color, size: 4, opacity: 0.35 },
         name: 'Daily',
+        yaxis: yaxis,
         hovertemplate: '%{x}<br>%{y}<extra></extra>',
     };
-
     const maTrace = {
         x: x,
-        y: yMa,
+        y: rows.map((row) => row[maKey]),
         type: 'scatter',
         mode: 'lines',
         line: { color: color, width: 2.5 },
         name: '14-day average',
+        yaxis: yaxis,
         hovertemplate: '%{x}<br>%{y:.1f}<extra></extra>',
     };
+    return [pointsTrace, maTrace];
+}
+
+function checkedOverlays(config) {
+    if (!config.overlays) return [];
+    return config.overlays.filter((overlay) => document.getElementById(overlay.checkboxId).checked);
+}
+
+function renderSingleChart(config) {
+    const rows = filteredRows();
+    const x = rows.map((row) => row.date);
+    const textColor = token('--lg-text-2');
+    const borderColor = token('--lg-border');
+    const overlays = checkedOverlays(config);
+
+    let traces = seriesTraces(rows, x, config.key, config.maKey, config.colorToken, 'y');
 
     const layout = {
-        margin: { l: 50, r: 16, t: 8, b: 36 },
+        margin: { l: 60, r: overlays.length ? 24 : 16, t: 8, b: 36 },
         paper_bgcolor: 'transparent',
         plot_bgcolor: 'transparent',
         font: { color: textColor, size: 12, family: 'IBM Plex Sans, sans-serif' },
         xaxis: { gridcolor: borderColor, zeroline: false },
-        yaxis: { gridcolor: borderColor, zeroline: false },
+        yaxis: {
+            gridcolor: borderColor,
+            zeroline: false,
+            title: { text: config.yAxisTitle, font: { color: textColor, size: 11 } },
+        },
         showlegend: false,
     };
 
-    Plotly.react(config.elementId, [pointsTrace, maTrace], layout, {
+    if (overlays.length > 0) {
+        // Each overlay gets its own y-axis on the right, stacked outward from the
+        // plot edge; the plotting area (xaxis domain) shrinks to make room for them.
+        const axisGap = 0.12;
+        const extraAxes = overlays.length - 1;
+        const domainMax = Math.max(0.4, 1 - extraAxes * axisGap);
+        layout.xaxis.domain = [0, domainMax];
+
+        overlays.forEach((overlay, idx) => {
+            const axisNum = idx + 2;
+            traces = traces.concat(
+                seriesTraces(rows, x, overlay.key, overlay.maKey, overlay.colorToken, 'y' + axisNum)
+            );
+            layout['yaxis' + axisNum] = {
+                overlaying: 'y',
+                side: 'right',
+                anchor: 'free',
+                position: Math.min(1, domainMax + idx * axisGap),
+                gridcolor: 'transparent',
+                zeroline: false,
+                title: { text: overlay.yAxisTitle, font: { color: token(overlay.colorToken), size: 11 } },
+                tickfont: { color: token(overlay.colorToken) },
+            };
+        });
+    }
+
+    Plotly.react(config.elementId, traces, layout, {
         responsive: true,
         displaylogo: false,
         modeBarButtonsToRemove: ['lasso2d', 'select2d'],
@@ -216,18 +335,50 @@ async function loadDashboard(source) {
     }
 }
 
+function setDefaultCustomRange() {
+    if (!chartState.rows.length) return;
+    if (!document.getElementById('custom-start-date').value) {
+        document.getElementById('custom-start-date').value = chartState.rows[0].date;
+    }
+    if (!document.getElementById('custom-end-date').value) {
+        document.getElementById('custom-end-date').value = chartState.rows[chartState.rows.length - 1].date;
+    }
+}
+
 document.getElementById('range-group').addEventListener('click', (event) => {
     const button = event.target.closest('button[data-days]');
     if (!button) return;
     document.querySelectorAll('#range-group button').forEach((b) => b.classList.remove('active'));
     button.classList.add('active');
     const days = button.dataset.days;
-    chartState.rangeDays = days === 'all' ? 'all' : Number(days);
+
+    if (days === 'custom') {
+        chartState.rangeDays = 'custom';
+        document.getElementById('custom-range-row').style.display = '';
+        setDefaultCustomRange();
+        chartState.customStart = document.getElementById('custom-start-date').value;
+        chartState.customEnd = document.getElementById('custom-end-date').value;
+    } else {
+        chartState.rangeDays = Number(days);
+        document.getElementById('custom-range-row').style.display = 'none';
+    }
+    renderCharts();
+});
+
+document.getElementById('apply-custom-range').addEventListener('click', () => {
+    chartState.customStart = document.getElementById('custom-start-date').value;
+    chartState.customEnd = document.getElementById('custom-end-date').value;
     renderCharts();
 });
 
 document.getElementById('source-select').addEventListener('change', (event) => {
     loadDashboard(event.target.value).catch((error) => setStatus(error.message));
+});
+
+chartConfig.weight.overlays.forEach((overlay) => {
+    document.getElementById(overlay.checkboxId).addEventListener('change', () => {
+        renderSingleChart(chartConfig.weight);
+    });
 });
 
 loadDashboard(chartState.source).catch((error) => {

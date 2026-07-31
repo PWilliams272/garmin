@@ -55,19 +55,21 @@ def _load_dashboard_timeseries(source: str = 'local') -> pd.DataFrame:
         steps_frame['date'] = pd.to_datetime(steps_frame['date'])
         frames.append(steps_frame)
     if not health_stats.empty:
-        weight_frame = health_stats[['date', 'weight']].copy()
+        weight_frame = health_stats[['date', 'weight', 'body_fat', 'bone_mass', 'muscle_mass']].copy()
         weight_frame['date'] = pd.to_datetime(weight_frame['date'])
         frames.append(weight_frame)
 
     if not frames:
-        return pd.DataFrame(columns=['date', 'resting_hr', 'total_steps', 'weight'])
+        return pd.DataFrame(columns=['date', 'resting_hr', 'total_steps', 'weight', 'body_fat', 'bone_mass', 'muscle_mass'])
 
     combined = frames[0]
     for frame in frames[1:]:
         combined = combined.merge(frame, on='date', how='outer')
 
     combined = combined.sort_values('date').reset_index(drop=True)
-    combined = _add_gaussian_moving_averages(combined, ['resting_hr', 'total_steps', 'weight'])
+    combined = _add_gaussian_moving_averages(
+        combined, ['resting_hr', 'total_steps', 'weight', 'body_fat', 'bone_mass', 'muscle_mass']
+    )
     return combined
 
 
