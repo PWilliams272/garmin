@@ -290,6 +290,64 @@ td.num, th.num {
   grid-column: 1 / -1;
 }
 
+.metric-row {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.metric-row .chart-card {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.metric-row .chart-host {
+  min-height: 260px;
+}
+
+.stat-panel {
+  flex: 0 0 200px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 16px;
+}
+
+.stat-item + .stat-item {
+  padding-top: 16px;
+  border-top: 1px solid var(--lg-border);
+}
+
+.stat-item-label {
+  font-size: var(--fs-xs);
+  color: var(--lg-text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 4px;
+}
+
+.stat-item-value {
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-item-trend {
+  font-size: var(--fs-sm);
+  margin-top: 4px;
+}
+
+@media (max-width: 720px) {
+  .metric-row {
+    flex-direction: column;
+  }
+
+  .stat-panel {
+    flex: none;
+  }
+}
+
 .status-line {
   color: var(--lg-text-2);
   font-size: var(--fs-sm);
