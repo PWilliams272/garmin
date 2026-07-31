@@ -87,7 +87,7 @@ def analyze_health_metric(curated_store: CuratedDataStore, dataset: str, metric:
 
     sts_trend, sts_day_to_day_std = fit_structural_trend(
         fittable["date"], fittable[metric], fittable["quality_weight"],
-        level="smooth trend", autoregressive_order=1,
+        level="smooth trend",
     )
     if not sts_trend.empty:
         sts_trend["day_to_day_std"] = sts_day_to_day_std
