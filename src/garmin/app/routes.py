@@ -9,6 +9,7 @@ from garmin.dashboard_curated import (
 from garmin.data_processor.processor import GarminDataProcessor
 from garmin.analysis.quality import classify_metric
 from garmin.analysis.trend_gp import fit_gp_trend
+from garmin.updaters import ACTIVITY_DATASETS
 import numpy as np
 import pandas as pd
 import os
@@ -343,9 +344,37 @@ def _mock_activities() -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values('date').reset_index(drop=True)
 
 
-def _activities_overview_payload() -> dict:
-    df = _mock_activities()
+def _activities_real_payload(source: str = 'local') -> dict | None:
+    """Real multi-sport activity overview, built from every registered activity dataset's summary.
 
+    Shaped identically to _mock_activities()'s output (date, type, duration_min,
+    distance_mi) so _activities_overview_from_df needs no branching on source.
+    """
+    store = curated_s3 if source == 's3' else curated_local
+    frames = []
+    for dataset in ACTIVITY_DATASETS:
+        summary = store.load_activity_summary(dataset)
+        if summary.empty:
+            continue
+        frame = summary[['date']].copy()
+        frame['type'] = dataset
+        frame['duration_min'] = summary.get('duration_min')
+        frame['distance_mi'] = summary.get('distance_mi') if 'distance_mi' in summary.columns else None
+        frames.append(frame)
+
+    if not frames:
+        return None
+
+    df = pd.concat(frames, ignore_index=True)
+    df['date'] = pd.to_datetime(df['date'])
+    return _activities_overview_from_df(df)
+
+
+def _activities_overview_payload() -> dict:
+    return _activities_overview_from_df(_mock_activities())
+
+
+def _activities_overview_from_df(df: pd.DataFrame) -> dict:
     weekly_by_type = (
         df.set_index('date')
         .groupby([pd.Grouper(freq='W-MON'), 'type'])
@@ -559,9 +588,17 @@ def activities():
 def api_activities_overview_data():
     import traceback
 
+    source = request.args.get('source', 'local')
+    if source not in {'local', 's3'}:
+        source = 'local'
+
     try:
-        payload = _activities_overview_payload()
-        payload['mock'] = True
+        is_mock = False
+        payload = _activities_real_payload(source=source)
+        if payload is None:
+            payload = _activities_overview_payload()
+            is_mock = True
+        payload['mock'] = is_mock
         return jsonify(payload)
     except Exception as e:
         print(f"Error loading activities overview data: {e}")

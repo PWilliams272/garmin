@@ -6,13 +6,13 @@
 {% endblock %}
 {% block content %}
 <div style="display: flex; align-items: center; gap: 10px;">
-    <span class="mock-badge">Mock data</span>
-    <span class="status-line">Synthetic example — replace once real activity data is flowing.</span>
+    <span class="mock-badge" id="activities-mock-badge" style="display: none;">Mock data</span>
+    <span class="status-line" id="activities-status-line">Loading…</span>
 </div>
 
 <section class="kpi-grid">
     <div class="card kpi-card">
-        <div class="kpi-label">Total Activities (26wk)</div>
+        <div class="kpi-label">Total Activities</div>
         <div class="kpi-value" id="kpi-total-activities">—</div>
     </div>
     <div class="card kpi-card">
@@ -113,10 +113,18 @@ const TYPE_COLORS = {
     swimming: '--lg-info',
 };
 
+function setMockStatus(badgeId, statusId, isMock) {
+    document.getElementById(badgeId).style.display = isMock ? '' : 'none';
+    document.getElementById(statusId).textContent = isMock
+        ? 'Synthetic example — replace once real activity data is flowing.'
+        : 'Real data from your curated activity history.';
+}
+
 async function loadOverview() {
     const response = await fetch('/api/activities_overview_data');
     const payload = await response.json();
     if (payload.error) throw new Error(payload.error);
+    setMockStatus('activities-mock-badge', 'activities-status-line', payload.mock);
 
     document.getElementById('kpi-total-activities').textContent = payload.kpis.total_activities;
     document.getElementById('kpi-total-distance').textContent = payload.kpis.total_distance_mi.toFixed(0) + ' mi';

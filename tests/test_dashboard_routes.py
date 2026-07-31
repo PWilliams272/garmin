@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pandas as pd
+
 import garmin.app.routes as routes_module
 from garmin.app.app import create_app
 
@@ -91,3 +93,55 @@ def test_curated_metrics_dashboard_refresh_builds_artifacts(tmp_path, monkeypatc
 
     assert response.status_code == 200
     assert b's3 artifact' in response.data
+
+
+def test_activities_overview_from_df_aggregates_by_type_and_week() -> None:
+    df = pd.DataFrame([
+        {'date': pd.Timestamp('2024-01-01'), 'type': 'running', 'duration_min': 30.0, 'distance_mi': 3.0},
+        {'date': pd.Timestamp('2024-01-02'), 'type': 'strength', 'duration_min': 45.0, 'distance_mi': None},
+        {'date': pd.Timestamp('2024-01-08'), 'type': 'running', 'duration_min': 40.0, 'distance_mi': 4.0},
+    ])
+
+    payload = routes_module._activities_overview_from_df(df)
+
+    assert payload['activity_types'] == ['running', 'strength']
+    assert payload['kpis']['total_activities'] == 3
+    assert payload['kpis']['total_distance_mi'] == 7.0
+    assert len(payload['recent_activities']) == 3
+
+
+def test_activities_overview_data_uses_real_payload_when_available(monkeypatch) -> None:
+    app = create_app()
+    fake_payload = {
+        'activity_types': ['running'],
+        'weekly_by_type': [],
+        'weekly_totals': [],
+        'recent_activities': [],
+        'kpis': {'total_activities': 5, 'total_distance_mi': 10.0, 'total_hours': 2.0},
+    }
+    monkeypatch.setattr(routes_module, '_activities_real_payload', lambda source='local': fake_payload)
+
+    with app.test_client() as client:
+        response = client.get('/api/activities_overview_data?source=local')
+
+    payload = response.get_json()
+    assert payload['mock'] is False
+    assert payload['kpis']['total_activities'] == 5
+
+
+def test_activities_overview_data_falls_back_to_mock_when_no_real_data(monkeypatch) -> None:
+    app = create_app()
+    monkeypatch.setattr(routes_module, '_activities_real_payload', lambda source='local': None)
+
+    with app.test_client() as client:
+        response = client.get('/api/activities_overview_data?source=local')
+
+    payload = response.get_json()
+    assert payload['mock'] is True
+    assert 'kpis' in payload
+
+
+def test_activities_real_payload_returns_none_when_no_datasets_have_data(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
+
+    assert routes_module._activities_real_payload(source='local') is None

@@ -17,6 +17,17 @@ from garmin.io.models import (
 )
 
 
+# Every curated/activities/summary/<dataset>.parquet dataset name the
+# activity pipeline knows about -- kept as a plain module-level list (rather
+# than only living inside DataUpdater._activity_type_registry) so the web
+# app can enumerate real activity datasets without needing a Garmin session.
+ACTIVITY_DATASETS = [
+    "running", "strength", "cycling", "indoor_cycling", "hiking",
+    "lap_swimming", "open_water_swimming", "hiit", "bouldering",
+    "rock_climbing", "tennis", "pickleball",
+]
+
+
 def convert_nulls(df):
     # Convert all NaT in datetime columns to None
     for col in df.columns:
@@ -416,24 +427,23 @@ class DataUpdater:
         as expected.
         """
         cardio = self.activity_puller.pull_cardio_summary
-        return [
+        entries = [
             {"dataset": "running", "activity_type": "running", "summary_fn": self.activity_puller.pull_running_summary},
             {
                 "dataset": "strength", "activity_type": "strength_training",
                 "summary_fn": self.activity_puller.pull_strength_summary,
                 "detail_fn": self.activity_puller.get_strength_workout,
             },
-            {"dataset": "cycling", "activity_type": "cycling", "summary_fn": lambda s, e: cardio("cycling", s, e)},
-            {"dataset": "indoor_cycling", "activity_type": "indoor_cycling", "summary_fn": lambda s, e: cardio("indoor_cycling", s, e)},
-            {"dataset": "hiking", "activity_type": "hiking", "summary_fn": lambda s, e: cardio("hiking", s, e)},
-            {"dataset": "lap_swimming", "activity_type": "lap_swimming", "summary_fn": lambda s, e: cardio("lap_swimming", s, e)},
-            {"dataset": "open_water_swimming", "activity_type": "open_water_swimming", "summary_fn": lambda s, e: cardio("open_water_swimming", s, e)},
-            {"dataset": "hiit", "activity_type": "hiit", "summary_fn": lambda s, e: cardio("hiit", s, e)},
-            {"dataset": "bouldering", "activity_type": "bouldering", "summary_fn": lambda s, e: cardio("bouldering", s, e)},
-            {"dataset": "rock_climbing", "activity_type": "rock_climbing", "summary_fn": lambda s, e: cardio("rock_climbing", s, e)},
-            {"dataset": "tennis", "activity_type": "tennis", "summary_fn": lambda s, e: cardio("tennis", s, e)},
-            {"dataset": "pickleball", "activity_type": "pickleball", "summary_fn": lambda s, e: cardio("pickleball", s, e)},
         ]
+        bespoke_datasets = {e["dataset"] for e in entries}
+        for dataset in ACTIVITY_DATASETS:
+            if dataset in bespoke_datasets:
+                continue
+            entries.append({
+                "dataset": dataset, "activity_type": dataset,
+                "summary_fn": lambda s, e, t=dataset: cardio(t, s, e),
+            })
+        return entries
 
     def _update_activity_curated(self, dataset: str, summary_fn, detail_fn=None, start_date: str = "2015-01-01") -> None:
         existing = self.curated_store.load_activity_summary(dataset)
