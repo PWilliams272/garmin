@@ -63,12 +63,14 @@ def _health_analyzed_payload(source: str = 'local') -> dict | None:
     for dataset, metrics in HEALTH_ANALYZED_METRICS.items():
         for metric in metrics:
             points = store.load_analyzed_points(dataset, metric)
-            trend = store.load_analyzed_trend(dataset, metric)
+            trend_gp = store.load_analyzed_trend(dataset, metric, kind='gp_multiscale')
+            trend_sts = store.load_analyzed_trend(dataset, metric, kind='sts')
             if not points.empty:
                 any_analyzed = True
             analyzed[metric] = {
                 'points': _timeseries_records(points) if not points.empty else [],
-                'trend': _timeseries_records(trend) if not trend.empty else [],
+                'trend_gp': _timeseries_records(trend_gp) if not trend_gp.empty else [],
+                'trend_sts': _timeseries_records(trend_sts) if not trend_sts.empty else [],
             }
 
     if not any_analyzed:

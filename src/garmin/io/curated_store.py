@@ -143,8 +143,9 @@ class CuratedDataStore:
         return f"curated/analyzed/{dataset}/{metric}_points.parquet"
 
     @staticmethod
-    def analyzed_trend_path(dataset: str, metric: str) -> str:
-        return f"curated/analyzed/{dataset}/{metric}_trend.parquet"
+    def analyzed_trend_path(dataset: str, metric: str, kind: str = "gp") -> str:
+        suffix = "_trend.parquet" if kind == "gp" else f"_trend_{kind}.parquet"
+        return f"curated/analyzed/{dataset}/{metric}{suffix}"
 
     def load_analyzed_points(self, dataset: str, metric: str) -> pd.DataFrame:
         return self._read_df_or_empty(self.analyzed_points_path(dataset, metric))
@@ -158,15 +159,15 @@ class CuratedDataStore:
             format="parquet",
         )
 
-    def load_analyzed_trend(self, dataset: str, metric: str) -> pd.DataFrame:
-        return self._read_df_or_empty(self.analyzed_trend_path(dataset, metric))
+    def load_analyzed_trend(self, dataset: str, metric: str, kind: str = "gp") -> pd.DataFrame:
+        return self._read_df_or_empty(self.analyzed_trend_path(dataset, metric, kind))
 
-    def write_analyzed_trend(self, dataset: str, metric: str, df: pd.DataFrame) -> None:
+    def write_analyzed_trend(self, dataset: str, metric: str, df: pd.DataFrame, kind: str = "gp") -> None:
         if df.empty:
             return
         self.file_manager.write_df(
             self._prepare_for_parquet(df),
-            self.analyzed_trend_path(dataset, metric),
+            self.analyzed_trend_path(dataset, metric, kind),
             format="parquet",
         )
 

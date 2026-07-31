@@ -23,6 +23,7 @@ dependencies = [
     "fastparquet",
     "boto3>=1.35",
     "scikit-learn>=1.5",
+    "statsmodels>=0.14",
     "myutils @ git+https://github.com/PWilliams272/myutils.git@prod",
 ]
 

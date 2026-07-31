@@ -207,23 +207,24 @@ function updateKpi(config, points) {
 // Optional `overlays` render as points + trend-line-only (no bands, to keep a
 // multi-axis chart legible) on their own free right-side y-axis.
 function renderAnalyzedChart(config, anchorDate) {
-    const entry = (chartState.analyzed && chartState.analyzed[config.metricKey]) || { points: [], trend: [] };
+    const entry = (chartState.analyzed && chartState.analyzed[config.metricKey]) || { points: [], trend_gp: [], trend_sts: [] };
     const allPoints = entry.points || [];
-    const allTrend = entry.trend || [];
+    const gpTrend = filterByRange(entry.trend_gp || [], anchorDate);
+    const stsTrend = filterByRange(entry.trend_sts || [], anchorDate);
 
     const visiblePoints = filterByRange(allPoints, anchorDate).filter((p) => p.quality_tier !== 'hard');
     const normalPoints = visiblePoints.filter((p) => p.quality_tier === 'normal');
     const softPoints = visiblePoints.filter((p) => p.quality_tier === 'soft');
-    const trend = filterByRange(allTrend, anchorDate);
     const color = token(config.colorToken);
+    const stsColor = token('--lg-danger');
 
     const traces = [];
-    if (trend.length) {
-        traces.push({ x: trend.map(t => t.date), y: trend.map(t => t.upper_95), type: 'scatter', mode: 'lines', line: { color, width: 1, dash: 'dot' }, hoverinfo: 'skip', showlegend: false });
-        traces.push({ x: trend.map(t => t.date), y: trend.map(t => t.lower_95), type: 'scatter', mode: 'lines', line: { color, width: 1, dash: 'dot' }, hoverinfo: 'skip', showlegend: false });
+    if (gpTrend.length) {
+        traces.push({ x: gpTrend.map(t => t.date), y: gpTrend.map(t => t.upper_95), type: 'scatter', mode: 'lines', line: { color, width: 1, dash: 'dot' }, hoverinfo: 'skip', showlegend: false });
+        traces.push({ x: gpTrend.map(t => t.date), y: gpTrend.map(t => t.lower_95), type: 'scatter', mode: 'lines', line: { color, width: 1, dash: 'dot' }, hoverinfo: 'skip', showlegend: false });
         traces.push({
-            x: trend.map(t => t.date).concat(trend.map(t => t.date).slice().reverse()),
-            y: trend.map(t => t.upper_68).concat(trend.map(t => t.lower_68).slice().reverse()),
+            x: gpTrend.map(t => t.date).concat(gpTrend.map(t => t.date).slice().reverse()),
+            y: gpTrend.map(t => t.upper_68).concat(gpTrend.map(t => t.lower_68).slice().reverse()),
             type: 'scatter', mode: 'lines', fill: 'toself', fillcolor: color + '33',
             line: { color: 'transparent' }, hoverinfo: 'skip', showlegend: false,
         });
@@ -231,20 +232,27 @@ function renderAnalyzedChart(config, anchorDate) {
     traces.push({
         x: normalPoints.map(p => p.date), y: normalPoints.map(p => p[config.metricKey]),
         type: 'scatter', mode: 'markers', marker: { color, size: 4, opacity: 0.35 }, yaxis: 'y',
-        hovertemplate: '%{x}<br>%{y}<extra></extra>',
+        hovertemplate: '%{x}<br>%{y}<extra></extra>', name: 'Observed',
     });
     traces.push({
         x: softPoints.map(p => p.date), y: softPoints.map(p => p[config.metricKey]),
         type: 'scatter', mode: 'markers',
         marker: { color, size: 6, opacity: 0.6, symbol: 'circle-open', line: { width: 1.5, color } },
-        yaxis: 'y', hovertemplate: '%{x}<br>%{y} (lower confidence)<extra></extra>',
+        yaxis: 'y', hovertemplate: '%{x}<br>%{y} (lower confidence)<extra></extra>', name: 'Uncertain',
     });
-    if (trend.length) {
-        traces.push({ x: trend.map(t => t.date), y: trend.map(t => t.mean), type: 'scatter', mode: 'lines', line: { color, width: 2.5 } });
+    if (gpTrend.length) {
+        traces.push({ x: gpTrend.map(t => t.date), y: gpTrend.map(t => t.mean), type: 'scatter', mode: 'lines', line: { color, width: 2.5 }, name: 'GP trend', showlegend: true });
+    }
+    if (stsTrend.length) {
+        traces.push({ x: stsTrend.map(t => t.date), y: stsTrend.map(t => t.mean), type: 'scatter', mode: 'lines', line: { color: stsColor, width: 2, dash: 'dash' }, name: 'Structural TS trend', showlegend: true });
     }
 
     const overlaysChecked = (config.overlays || []).filter((o) => document.getElementById(o.checkboxId).checked);
-    const layout = baseLayout(config.yAxisTitle, { margin: { l: 60, r: overlaysChecked.length ? 24 : 16, t: 8, b: 36 } });
+    const layout = baseLayout(config.yAxisTitle, {
+        margin: { l: 60, r: overlaysChecked.length ? 24 : 16, t: 8, b: 36 },
+        showlegend: true,
+        legend: { orientation: 'h', y: -0.2 },
+    });
 
     if (overlaysChecked.length > 0) {
         const axisGap = 0.12;
@@ -253,9 +261,9 @@ function renderAnalyzedChart(config, anchorDate) {
 
         overlaysChecked.forEach((overlay, idx) => {
             const axisNum = idx + 2;
-            const overlayEntry = (chartState.analyzed && chartState.analyzed[overlay.metricKey]) || { points: [], trend: [] };
+            const overlayEntry = (chartState.analyzed && chartState.analyzed[overlay.metricKey]) || { points: [], trend_gp: [] };
             const overlayPoints = filterByRange(overlayEntry.points || [], anchorDate).filter((p) => p.quality_tier !== 'hard');
-            const overlayTrend = filterByRange(overlayEntry.trend || [], anchorDate);
+            const overlayTrend = filterByRange(overlayEntry.trend_gp || [], anchorDate);
             const overlayColor = token(overlay.colorToken);
 
             traces.push({

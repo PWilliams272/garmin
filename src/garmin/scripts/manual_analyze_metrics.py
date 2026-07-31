@@ -3,7 +3,7 @@ load_dotenv()
 
 import argparse
 
-from garmin.analysis.activity_pipeline import analyze_all
+from garmin.analysis.analysis_pipeline import analyze_all
 from garmin.io.curated_store import CuratedDataStore
 from garmin.io.file_manager import FileManager
 
