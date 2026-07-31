@@ -1,0 +1,39 @@
+# garmin
+
+Pulls, processes, and visualizes personal Garmin Connect data. Python 3.11, Flask, pandas, Plotly (new dashboard) / Bokeh (legacy dashboard), boto3.
+
+## Architecture
+
+Layered pipeline, each stage only reads the previous stage's output — nothing computes on request:
+
+- `garmin/api/` — Garmin Connect session/auth boundary. Runtime code does not use `garth`; keep provider-specific logic isolated here.
+- `garmin/pullers/` — fetch raw data from Garmin.
+- `garmin/updaters.py` — orchestrates pulls, writes curated output.
+- `garmin/io/` — `file_manager.py` (local-vs-S3 abstraction), `curated_store.py` (curated parquet read/write), `db_manager.py` (legacy DB path, being retired).
+- `garmin/analysis/` — quality classification (`quality.py`), trend fitting (`trend_gp.py`, `trend_sts.py`), pipeline entrypoint (`analysis_pipeline.py`). Run offline via `garmin/scripts/manual_analyze_metrics.py`; the web app only ever reads the `curated/analyzed/` output.
+- `garmin/app/` — Flask dashboard. `/quick_dashboard` is the current Plotly-based app (kaya-style); `/metrics_dashboard` and `/curated_metrics_dashboard` are the older Bokeh-based routes, not yet retired.
+
+## Run / validate
+
+```bash
+source .venv/bin/activate && python -m garmin.app.app          # run the app
+source .venv/bin/activate && python -m pytest tests/ -q        # tests
+source .venv/bin/activate && python -m compileall src/garmin   # syntax check
+```
+
+Full setup, env vars, and update/backfill commands: see `README.md`.
+
+## Rules
+
+- Keep Garmin-provider-specific logic behind `garmin/api/` — don't spread session/auth assumptions into pullers or updaters.
+- Web routes read precomputed `curated/analyzed/` output only; never fit a model or hit Garmin on request.
+- Don't edit generated dashboard HTML, cached data under `data/`, or notebook artifacts unless the task is explicitly about regenerating them.
+- Public modules/classes/functions get docstrings; new public APIs get type hints.
+- `pyproject.toml` is the packaging source of truth; `setup.py` and `requirements.txt` are compatibility shims, not where new dependencies go.
+
+## Where to look for more
+
+- `README.md` — setup, env vars, auth model, local/Lambda commands.
+- `GARMIN_HANDOFF.md` — AWS resource names, CLI profiles, verified live state.
+- `GAME_PLAN.md` — current multi-goal roadmap (cleanup → activities data → Plotly migration → standalone deploy → predictive analysis).
+- `WEB_APP_SETUP.md` — deploy spec for the future `garmin.peterwilliams.dev` standalone app (not started yet).
