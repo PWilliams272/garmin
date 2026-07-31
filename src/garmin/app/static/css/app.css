@@ -208,6 +208,26 @@ td.num, th.num {
   text-transform: uppercase;
 }
 
+.collapsible-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+}
+
+.collapse-chevron {
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.chart-card.collapsed .collapse-chevron {
+  transform: rotate(-90deg);
+}
+
+.chart-card.collapsed .chart-body {
+  display: none;
+}
+
 .kpi-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));

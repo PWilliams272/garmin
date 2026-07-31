@@ -49,35 +49,47 @@
         </aside>
 
         <section class="dashboard-charts">
-            <div class="card chart-card">
-                <div class="section-heading">Weight</div>
-                <div class="chart-host" id="weight-chart"></div>
-                <div class="status-line" id="weight-outliers"></div>
+            <div class="card chart-card collapsible-card">
+                <div class="section-heading collapsible-header"><span>Weight</span><span class="collapse-chevron">▾</span></div>
+                <div class="chart-body">
+                    <div class="chart-host" id="weight-chart"></div>
+                    <div class="status-line" id="weight-outliers"></div>
+                </div>
             </div>
-            <div class="card chart-card">
-                <div class="section-heading">Body Fat %</div>
-                <div class="chart-host" id="body-fat-chart"></div>
-                <div class="status-line" id="body-fat-outliers"></div>
+            <div class="card chart-card collapsible-card">
+                <div class="section-heading collapsible-header"><span>Body Fat %</span><span class="collapse-chevron">▾</span></div>
+                <div class="chart-body">
+                    <div class="chart-host" id="body-fat-chart"></div>
+                    <div class="status-line" id="body-fat-outliers"></div>
+                </div>
             </div>
-            <div class="card chart-card">
-                <div class="section-heading">Muscle Mass</div>
-                <div class="chart-host" id="muscle-mass-chart"></div>
-                <div class="status-line" id="muscle-mass-outliers"></div>
+            <div class="card chart-card collapsible-card">
+                <div class="section-heading collapsible-header"><span>Muscle Mass</span><span class="collapse-chevron">▾</span></div>
+                <div class="chart-body">
+                    <div class="chart-host" id="muscle-mass-chart"></div>
+                    <div class="status-line" id="muscle-mass-outliers"></div>
+                </div>
             </div>
-            <div class="card chart-card">
-                <div class="section-heading">Bone Mass</div>
-                <div class="chart-host" id="bone-mass-chart"></div>
-                <div class="status-line" id="bone-mass-outliers"></div>
+            <div class="card chart-card collapsible-card">
+                <div class="section-heading collapsible-header"><span>Bone Mass</span><span class="collapse-chevron">▾</span></div>
+                <div class="chart-body">
+                    <div class="chart-host" id="bone-mass-chart"></div>
+                    <div class="status-line" id="bone-mass-outliers"></div>
+                </div>
             </div>
-            <div class="card chart-card">
-                <div class="section-heading">Resting Heart Rate</div>
-                <div class="chart-host" id="heart-rate-chart"></div>
-                <div class="status-line" id="heart-rate-outliers"></div>
+            <div class="card chart-card collapsible-card">
+                <div class="section-heading collapsible-header"><span>Resting Heart Rate</span><span class="collapse-chevron">▾</span></div>
+                <div class="chart-body">
+                    <div class="chart-host" id="heart-rate-chart"></div>
+                    <div class="status-line" id="heart-rate-outliers"></div>
+                </div>
             </div>
-            <div class="card chart-card">
-                <div class="section-heading">Daily Steps</div>
-                <div class="chart-host" id="steps-chart"></div>
-                <div class="status-line" id="steps-outliers"></div>
+            <div class="card chart-card collapsible-card">
+                <div class="section-heading collapsible-header"><span>Daily Steps</span><span class="collapse-chevron">▾</span></div>
+                <div class="chart-body">
+                    <div class="chart-host" id="steps-chart"></div>
+                    <div class="status-line" id="steps-outliers"></div>
+                </div>
             </div>
         </section>
     </div>
@@ -202,9 +214,22 @@ function trendValueNear(fullTrend, targetDate) {
     return nearest ? nearest.mean : null;
 }
 
-function trendDeltaText(config, delta) {
+// A delta only counts as "up"/"down" if it clears a chunk of the metric's
+// own day-to-day noise floor (day_to_day_std, the same number shown as
+// "Typical Day-to-Day") -- otherwise a wiggle well inside normal
+// measurement noise would get an arrow implying real movement. STEADY_FRACTION
+// is a judgment call, not derived from anything: 0.5 means "smaller than
+// half a typical day's fluctuation" reads as steady. Tune if arrows feel
+// too twitchy (lower) or too reluctant to commit (raise).
+const STEADY_FRACTION = 0.5;
+
+function trendDeltaText(config, delta, dayToDayStd) {
     if (delta === null || delta === undefined || Number.isNaN(delta)) return { text: '—', color: token('--lg-text-2') };
-    const arrow = delta > 0 ? '↗' : (delta < 0 ? '↘' : '→');
+    const steadyThreshold = (dayToDayStd && !Number.isNaN(dayToDayStd)) ? dayToDayStd * STEADY_FRACTION : 0;
+    if (Math.abs(delta) < steadyThreshold) {
+        return { text: `→ ${config.format(Math.abs(delta))}`, color: token('--lg-text-2') };
+    }
+    const arrow = delta > 0 ? '↗' : '↘';
     let color = token('--lg-text-2');
     if (config.betterWhen === 'higher') color = delta >= 0 ? token('--lg-success') : token('--lg-danger');
     if (config.betterWhen === 'lower') color = delta <= 0 ? token('--lg-success') : token('--lg-danger');
@@ -232,7 +257,7 @@ function buildStatSummary(config, allPoints, fullTrend, anchorDate) {
             target.setDate(target.getDate() - days);
             const pastVal = trendValueNear(fullTrend, target);
             const delta = pastVal === null ? null : nowVal - pastVal;
-            const { text, color } = trendDeltaText(config, delta);
+            const { text, color } = trendDeltaText(config, delta, dayToDayStd);
             lines.push({ label: `${days}d Trend`, value: text, color });
         });
     }
@@ -521,6 +546,17 @@ document.getElementById('apply-custom-range').addEventListener('click', () => {
 
 document.getElementById('source-select').addEventListener('change', (event) => {
     loadDashboard(event.target.value).catch((error) => setStatus(error.message));
+});
+
+document.querySelectorAll('.collapsible-header').forEach((header) => {
+    header.addEventListener('click', () => {
+        const card = header.closest('.chart-card');
+        card.classList.toggle('collapsed');
+        if (!card.classList.contains('collapsed')) {
+            const chartHost = card.querySelector('.chart-host');
+            if (chartHost && chartHost.id) Plotly.Plots.resize(chartHost.id);
+        }
+    });
 });
 
 loadDashboard(chartState.source).catch((error) => {
