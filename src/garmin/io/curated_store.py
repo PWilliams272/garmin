@@ -78,6 +78,66 @@ class CuratedDataStore:
         )
         return merged
 
+    @staticmethod
+    def activity_summary_path(dataset: str) -> str:
+        return f"curated/activities/summary/{dataset}.parquet"
+
+    @staticmethod
+    def activity_detail_path(dataset: str, activity_id: str) -> str:
+        return f"curated/activities/detail/{dataset}/activity_id={activity_id}.parquet"
+
+    def load_activity_summary(self, dataset: str) -> pd.DataFrame:
+        return self._read_df_or_empty(self.activity_summary_path(dataset))
+
+    def merge_activity_summary(self, dataset: str, df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty:
+            return self.load_activity_summary(dataset)
+
+        incoming = df.copy()
+        incoming["date"] = pd.to_datetime(incoming["date"]).dt.date
+
+        existing = self.load_activity_summary(dataset)
+        if existing.empty:
+            merged = incoming
+        else:
+            existing = existing.copy()
+            existing["date"] = pd.to_datetime(existing["date"]).dt.date
+            merged = pd.concat([existing, incoming], ignore_index=True)
+            merged = merged.drop_duplicates(subset=["activity_id"], keep="last")
+
+        merged = merged.sort_values("date").reset_index(drop=True)
+        self.file_manager.write_df(
+            self._prepare_for_parquet(merged),
+            self.activity_summary_path(dataset),
+            format="parquet",
+        )
+        return merged
+
+    def write_activity_detail(self, dataset: str, activity_id: str, df: pd.DataFrame) -> None:
+        if df.empty:
+            return
+        self.file_manager.write_df(
+            self._prepare_for_parquet(df),
+            self.activity_detail_path(dataset, activity_id),
+            format="parquet",
+        )
+
+    def load_activity_detail(self, dataset: str, activity_id: str) -> pd.DataFrame:
+        return self._read_df_or_empty(self.activity_detail_path(dataset, activity_id))
+
+    def load_all_activity_details(self, dataset: str) -> pd.DataFrame:
+        prefix = f"curated/activities/detail/{dataset}/"
+        files = [f for f in self.file_manager.list_files(prefix) if f.endswith(".parquet")]
+        frames = []
+        for f in files:
+            try:
+                frames.append(self.file_manager.read_df(f, format="parquet"))
+            except FileNotFoundError:
+                continue
+        if not frames:
+            return pd.DataFrame()
+        return pd.concat(frames, ignore_index=True)
+
     def write_detailed_day(self, dataset: str, query_date: str, df: pd.DataFrame) -> None:
         if df.empty:
             return

@@ -89,6 +89,37 @@ class FileManager:
         else:
             raise ValueError(f"Unsupported format: {format}")
 
+    def list_files(self, prefix):
+        """List file paths (relative to the data root) under a prefix, local or S3."""
+        if self.environment == 'aws':
+            return self._list_files_s3(prefix)
+        return self._list_files_local(prefix)
+
+    def _list_files_local(self, prefix):
+        base = self._local_path(prefix)
+        if not os.path.isdir(base):
+            return []
+        results = []
+        for root, _, files in os.walk(base):
+            for fname in files:
+                full = os.path.join(root, fname)
+                rel = os.path.relpath(full, self.local_dir)
+                results.append(rel.replace(os.sep, '/'))
+        return sorted(results)
+
+    def _list_files_s3(self, prefix):
+        s3 = boto3.client('s3')
+        key_prefix = self._s3_key(prefix)
+        paginator = s3.get_paginator('list_objects_v2')
+        results = []
+        for page in paginator.paginate(Bucket=self.s3_bucket, Prefix=key_prefix):
+            for obj in page.get('Contents', []):
+                key = obj['Key']
+                if self.s3_prefix and key.startswith(self.s3_prefix):
+                    key = key[len(self.s3_prefix):]
+                results.append(key)
+        return sorted(results)
+
     def write_text(self, text, filename):
         """Write a string to a file (local or S3)."""
         if self.environment == 'aws':

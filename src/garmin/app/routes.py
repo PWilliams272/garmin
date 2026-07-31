@@ -161,8 +161,8 @@ def _running_payload() -> dict:
 def _mock_lifting_sessions() -> pd.DataFrame:
     """Synthetic strength sessions: per-exercise top-set weight with a slow progression trend."""
     rng = np.random.default_rng(7)
-    exercises = ['bench_press', 'squat', 'bicep_curl']
-    base_weights = {'bench_press': 135.0, 'squat': 185.0, 'bicep_curl': 30.0}
+    exercises = ['bench_press', 'squat', 'curl']
+    base_weights = {'bench_press': 135.0, 'squat': 185.0, 'curl': 30.0}
     weeks = 52
     today = pd.Timestamp.today().normalize()
     start = today - pd.Timedelta(weeks=weeks)
@@ -200,6 +200,93 @@ def _lifting_payload() -> dict:
 
     weekly_frequency = (
         df.set_index('date')
+        .groupby([pd.Grouper(freq='W-MON'), 'exercise'])
+        .size()
+        .reset_index(name='sessions')
+    )
+    return {
+        'exercises': exercises,
+        'weekly_frequency': _timeseries_records(weekly_frequency),
+    }
+
+
+REAL_LIFTING_EXERCISES = ['bench_press', 'squat', 'curl']
+
+
+def _running_real_payload(source: str = 'local') -> dict | None:
+    store = curated_s3 if source == 's3' else curated_local
+    df = store.load_activity_summary('running')
+    if df.empty:
+        return None
+
+    df = df.copy()
+    df['date'] = pd.to_datetime(df['date'])
+    df = df.sort_values('date').reset_index(drop=True)
+
+    processor = GarminDataProcessor()
+    ma_columns = [c for c in ['distance_mi', 'pace_min_per_mile', 'cadence_spm'] if c in df.columns]
+    if ma_columns:
+        ma_df = processor.calculate_moving_averages(df, ma_columns, kernels=['gaussian'], bandwidths=[MOCK_MA_BANDWIDTH_DAYS])
+        for col in ma_columns:
+            df[f'{col}_ma'] = ma_df[f'{col}_gaussian_{MOCK_MA_BANDWIDTH_DAYS}']
+
+    weekly = (
+        df.set_index('date')
+        .resample('W-MON')
+        .agg(run_count=('distance_mi', 'count'), total_distance_mi=('distance_mi', 'sum'))
+        .reset_index()
+    )
+    return {
+        'runs': _timeseries_records(df),
+        'weekly': _timeseries_records(weekly),
+    }
+
+
+def _lifting_real_payload(source: str = 'local') -> dict | None:
+    store = curated_s3 if source == 's3' else curated_local
+    summary = store.load_activity_summary('strength')
+    if summary.empty:
+        return None
+
+    summary = summary.copy()
+    summary['date'] = pd.to_datetime(summary['date'])
+
+    detail = store.load_all_activity_details('strength')
+    if detail.empty:
+        return None
+
+    detail = detail.merge(summary[['activity_id', 'date']], on='activity_id', how='left')
+    detail = detail.dropna(subset=['date'])
+
+    processor = GarminDataProcessor()
+    exercises = {}
+    for exercise in REAL_LIFTING_EXERCISES:
+        ex_df = detail[detail['exercise'] == exercise]
+        if ex_df.empty:
+            exercises[exercise] = []
+            continue
+
+        top_sets = (
+            ex_df.groupby(['activity_id', 'date'], as_index=False)['weight_lb']
+            .max()
+            .rename(columns={'weight_lb': 'top_weight_lb'})
+            .dropna(subset=['top_weight_lb'])
+            .sort_values('date')
+            .reset_index(drop=True)
+        )
+        if top_sets.empty:
+            exercises[exercise] = []
+            continue
+
+        ma_df = processor.calculate_moving_averages(
+            top_sets, ['top_weight_lb'], kernels=['gaussian'], bandwidths=[MOCK_MA_BANDWIDTH_DAYS]
+        )
+        top_sets['top_weight_lb_ma'] = ma_df[f'top_weight_lb_gaussian_{MOCK_MA_BANDWIDTH_DAYS}']
+        exercises[exercise] = _timeseries_records(top_sets[['date', 'top_weight_lb', 'top_weight_lb_ma']])
+
+    weekly_frequency = (
+        detail.drop_duplicates(subset=['activity_id', 'exercise'])
+        .set_index('date')
         .groupby([pd.Grouper(freq='W-MON'), 'exercise'])
         .size()
         .reset_index(name='sessions')
@@ -418,14 +505,25 @@ def api_fitness_data():
     import traceback
 
     sport = request.args.get('sport', 'running')
+    source = request.args.get('source', 'local')
+    if source not in {'local', 's3'}:
+        source = 'local'
+
     try:
+        is_mock = False
         if sport == 'running':
-            payload = _running_payload()
+            payload = _running_real_payload(source=source)
+            if payload is None:
+                payload = _running_payload()
+                is_mock = True
         elif sport == 'lifting':
-            payload = _lifting_payload()
+            payload = _lifting_real_payload(source=source)
+            if payload is None:
+                payload = _lifting_payload()
+                is_mock = True
         else:
             return jsonify({'sport': sport, 'mock': True, 'available': False})
-        payload.update({'sport': sport, 'mock': True, 'available': True})
+        payload.update({'sport': sport, 'mock': is_mock, 'available': True})
         return jsonify(payload)
     except Exception as e:
         print(f"Error loading fitness data: {e}")

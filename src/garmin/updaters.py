@@ -9,6 +9,7 @@ from garmin.io.db_manager import DatabaseManager
 from garmin.io.curated_store import CuratedDataStore
 from garmin.pullers.health import HealthPuller
 from garmin.pullers.health_detailed import HealthDetailedPuller
+from garmin.pullers.activities import ActivityPuller
 from sqlalchemy.dialects.postgresql import insert
 from garmin.io.models import (
     HealthStats, Steps, Sleep, Stress, BodyBattery, HeartRate, HRV, Respiration,
@@ -43,7 +44,7 @@ class DataUpdater:
             self.db = db_manager or DatabaseManager()
         self.health_puller = health_puller or HealthPuller(session)
         self.health_detailed_puller = health_detailed_puller or HealthDetailedPuller(session)
-        #self.activity_puller = activity_puller or ActivityPuller(session)
+        self.activity_puller = activity_puller or ActivityPuller(session)
         
         self.pull_fn_map = {
             HealthStats: lambda **kwargs: self.health_puller.pull_data('weight', **kwargs),
@@ -399,6 +400,45 @@ class DataUpdater:
             f"{len(no_data_dates)} no_data, {len(denied_dates)} denied."
         )
 
+    def _update_running_curated(self, start_date: str = "2015-01-01") -> None:
+        dataset = "running"
+        existing = self.curated_store.load_activity_summary(dataset)
+        if not existing.empty and "date" in existing.columns:
+            last_date = pd.to_datetime(existing["date"]).dt.date.max()
+            start_date = last_date.strftime("%Y-%m-%d")
+
+        today = datetime.today().date()
+        df = self.activity_puller.pull_running_summary(start_date, today.strftime("%Y-%m-%d"))
+        if df.empty:
+            print("No new running activities.")
+            return
+
+        merged = self.curated_store.merge_activity_summary(dataset, df)
+        print(f"Saved {len(merged)} curated running activities ({len(df)} new/updated).")
+
+    def _update_strength_curated(self, start_date: str = "2015-01-01") -> None:
+        dataset = "strength"
+        existing = self.curated_store.load_activity_summary(dataset)
+        if not existing.empty and "date" in existing.columns:
+            last_date = pd.to_datetime(existing["date"]).dt.date.max()
+            start_date = last_date.strftime("%Y-%m-%d")
+
+        today = datetime.today().date()
+        summary_df = self.activity_puller.pull_strength_summary(start_date, today.strftime("%Y-%m-%d"))
+        if summary_df.empty:
+            print("No new strength activities.")
+            return
+
+        merged = self.curated_store.merge_activity_summary(dataset, summary_df)
+        for activity_id in summary_df["activity_id"]:
+            sets_df = self.activity_puller.get_strength_workout(activity_id)
+            if sets_df.empty:
+                continue
+            sets_df["activity_id"] = activity_id
+            self.curated_store.write_activity_detail(dataset, activity_id, sets_df)
+
+        print(f"Saved {len(merged)} curated strength sessions ({len(summary_df)} new/updated).")
+
     def _resolve_model_class(self, class_or_name: str | type) -> type:
         if isinstance(class_or_name, str):
             # Avoid circular imports
@@ -429,3 +469,7 @@ class DataUpdater:
         ]
         for model_class in model_class_list:
             self.update(model_class)
+
+        if self.curated_store is not None:
+            self._update_running_curated()
+            self._update_strength_curated()
