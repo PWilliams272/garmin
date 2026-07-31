@@ -77,6 +77,44 @@ def test_pull_running_summary_still_includes_cadence() -> None:
     assert df.iloc[0]["cadence_spm"] == 172
 
 
+class StubDetailSession:
+    """Returns a fixed /details response for any activity-detail call."""
+
+    def __init__(self, detail_response) -> None:
+        self.detail_response = detail_response
+
+    def get(self, url: str):
+        if url.endswith("/details"):
+            return self.detail_response
+        return None
+
+
+def test_get_activity_gps_extracts_polyline_points() -> None:
+    detail_response = {
+        "geoPolylineDTO": {
+            "polyline": [
+                {"lat": 40.0, "lon": -105.0, "altitude": 1600.0, "time": 1000},
+                {"lat": 40.001, "lon": -105.001, "altitude": 1605.0, "time": 1005},
+            ]
+        }
+    }
+    puller = ActivityPuller(StubDetailSession(detail_response))
+
+    df = puller.get_activity_gps("123")
+
+    assert list(df["lat"]) == [40.0, 40.001]
+    assert list(df["lon"]) == [-105.0, -105.001]
+    assert df.iloc[0]["elevation_ft"] == round(1600.0 / 0.3048, 1)
+
+
+def test_get_activity_gps_handles_missing_polyline_gracefully() -> None:
+    puller = ActivityPuller(StubDetailSession({}))
+
+    df = puller.get_activity_gps("123")
+
+    assert df.empty
+
+
 def test_activity_type_registry_has_expected_datasets() -> None:
     updater = DataUpdater(session=object(), db_manager=object(), curated_store=object())
     datasets = {entry["dataset"] for entry in updater._activity_type_registry()}

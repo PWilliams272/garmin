@@ -141,6 +141,36 @@ class ActivityPuller:
             })
         return pd.DataFrame(rows)
 
+    def get_activity_gps(self, activity_id: str) -> pd.DataFrame:
+        """Lat/lng (+ optional elevation/timestamp) track for one GPS-based activity.
+
+        Exploratory/spike method -- unlike pull_running_summary or
+        get_strength_workout, this endpoint hasn't been exercised against a
+        real Garmin response in this repo yet. `/activity-service/activity/
+        {id}/details`'s `geoPolylineDTO.polyline` (list of {lat, lon,
+        [altitude], [time]}) is the endpoint Garmin Connect's own web UI
+        uses for the activity map thumbnail, per widely-used community
+        clients (e.g. cyberjunky/python-garminconnect) -- but verify the
+        exact field names/shape against a live pull before relying on this
+        for anything beyond manual_fetch_activity_gps.py's one-activity spike.
+        """
+        url = f"/activity-service/activity/{activity_id}/details"
+        res = self.session.get(url)
+        if not res:
+            return pd.DataFrame()
+
+        polyline = (res.get("geoPolylineDTO") or {}).get("polyline") or []
+        rows = [
+            {
+                "lat": p.get("lat"),
+                "lon": p.get("lon"),
+                "elevation_ft": round(p["altitude"] / METERS_PER_FOOT, 1) if p.get("altitude") is not None else None,
+                "time": p.get("time"),
+            }
+            for p in polyline
+        ]
+        return pd.DataFrame(rows)
+
     def pull_strength_sets(self, start_date: str, end_date: str, show_progress: bool = True) -> pd.DataFrame:
         """Per-set detail rows across all strength_training activities in range, tagged with activity_id/date."""
         activities = self.pull_activity_list(start_date, end_date, activity_types={"strength_training"})
