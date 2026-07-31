@@ -113,11 +113,19 @@ function renderStatusHeatmap(payload) {
         paper_bgcolor: 'transparent',
         plot_bgcolor: 'transparent',
         font: { color: token('--lg-text-2'), size: 12, family: 'IBM Plex Sans, sans-serif' },
+        dragmode: 'zoom',
         xaxis: { gridcolor: 'transparent', zeroline: false },
-        yaxis: { gridcolor: 'transparent', zeroline: false, automargin: true },
+        // fixedrange locks that axis out of drag-zoom/pan/scroll-zoom entirely
+        // -- rows are a fixed dataset list, not a continuous scale, so only
+        // the x (date) axis should be zoomable.
+        yaxis: { gridcolor: 'transparent', zeroline: false, automargin: true, fixedrange: true },
     };
 
-    Plotly.react('status-heatmap', [trace], layout, { responsive: true, displaylogo: false });
+    Plotly.react('status-heatmap', [trace], layout, {
+        responsive: true, displaylogo: false,
+        modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+        scrollZoom: true,
+    });
 }
 
 async function loadDataStatus(source) {
