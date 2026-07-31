@@ -214,10 +214,23 @@ td.num, th.num {
   justify-content: space-between;
   cursor: pointer;
   user-select: none;
+  border-radius: var(--lg-radius-md);
+  margin: -4px -6px 8px;
+  padding: 4px 6px 12px;
+}
+
+.collapsible-header:hover {
+  background: var(--lg-active);
+}
+
+.collapsible-header:hover .collapse-chevron {
+  color: var(--lg-text);
 }
 
 .collapse-chevron {
-  transition: transform var(--dur-fast) var(--ease-out);
+  font-size: 13px;
+  color: var(--lg-text-2);
+  transition: transform var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 
 .chart-card.collapsed .collapse-chevron {
