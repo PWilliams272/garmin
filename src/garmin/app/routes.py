@@ -81,6 +81,83 @@ def _health_analyzed_payload(source: str = 'local') -> dict | None:
     return {'analyzed': analyzed}
 
 
+# Every intraday dataset that tracks per-day pull status via
+# curated/metadata/detailed_status/<dataset>.parquet (fetched/no_data/denied),
+# written by DataUpdater._update_detailed_time_series_curated.
+DATA_STATUS_DETAILED_DATASETS = [
+    'heart_rate_detailed', 'spo2_detailed', 'steps_detailed', 'respiration_detailed',
+]
+
+# Every daily (one-row-per-date) dataset. These don't track denial the way
+# detailed datasets do -- a date either has a row (fetched) or doesn't
+# (untouched); there's no way yet to distinguish "Garmin had nothing for
+# that date" from "we haven't tried."
+DATA_STATUS_DAILY_DATASETS = [
+    'health_stats', 'steps', 'sleep', 'stress', 'body_battery', 'heart_rate', 'hrv', 'respiration',
+]
+
+DATA_STATUS_CODES = {'untouched': 0, 'no_data': 1, 'denied': 2, 'fetched': 3}
+
+
+def _data_status_payload(source: str = 'local') -> dict:
+    """Per-day pull status (fetched/no_data/denied/untouched) for every dataset
+    that tracks it, for the calendar-style status monitor. Activity datasets
+    (running/strength/...) are excluded -- ActivityPuller doesn't yet detect
+    or record 429/denial the way HealthDetailedPuller does, so there's no
+    per-day status to show for them.
+    """
+    store = curated_s3 if source == 's3' else curated_local
+    today = pd.Timestamp.today().normalize()
+
+    per_dataset: dict[str, dict[str, pd.Timestamp | pd.Series]] = {}
+
+    for dataset in DATA_STATUS_DETAILED_DATASETS:
+        status_df = store.load_detailed_status(dataset)
+        if status_df.empty:
+            continue
+        status_df = status_df.copy()
+        status_df['query_date'] = pd.to_datetime(status_df['query_date'])
+        status_by_date = status_df.set_index('query_date')['pull_status']
+        per_dataset[dataset] = {'start': status_by_date.index.min(), 'status_by_date': status_by_date}
+
+    for dataset in DATA_STATUS_DAILY_DATASETS:
+        daily_df = store.load_daily(dataset)
+        if daily_df.empty:
+            continue
+        dates = pd.to_datetime(daily_df['date'])
+        status_by_date = pd.Series('fetched', index=dates)
+        per_dataset[dataset] = {'start': dates.min(), 'status_by_date': status_by_date}
+
+    if not per_dataset:
+        return {'datasets': [], 'dates': [], 'status_codes': DATA_STATUS_CODES}
+
+    global_start = min(info['start'] for info in per_dataset.values())
+    all_dates = pd.date_range(global_start, today, freq='D')
+
+    datasets_payload = []
+    for name in DATA_STATUS_DETAILED_DATASETS + DATA_STATUS_DAILY_DATASETS:
+        info = per_dataset.get(name)
+        if info is None:
+            continue
+        status_by_date = info['status_by_date']
+        statuses = [
+            DATA_STATUS_CODES.get(status_by_date.get(d), DATA_STATUS_CODES['untouched']) if d >= info['start']
+            else DATA_STATUS_CODES['untouched']
+            for d in all_dates
+        ]
+        datasets_payload.append({
+            'name': name,
+            'kind': 'detailed' if name in DATA_STATUS_DETAILED_DATASETS else 'daily',
+            'statuses': statuses,
+        })
+
+    return {
+        'datasets': datasets_payload,
+        'dates': [d.date().isoformat() for d in all_dates],
+        'status_codes': DATA_STATUS_CODES,
+    }
+
+
 def _timeseries_records(df: pd.DataFrame) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
     for row in df.to_dict(orient='records'):
@@ -634,3 +711,26 @@ def api_recommend():
         'suggestion': suggestion,
         'note': 'Placeholder logic — real suggestions will draw on training load, recovery, and sleep once that modeling exists.',
     })
+
+
+@bp.route('/data_status')
+def data_status():
+    return render_template('data_status.html', active_section='data_status')
+
+
+@bp.route('/api/data_status_data')
+def api_data_status_data():
+    import traceback
+
+    source = request.args.get('source', 'local')
+    if source not in {'local', 's3'}:
+        source = 'local'
+
+    try:
+        payload = _data_status_payload(source=source)
+        payload['source'] = source
+        return jsonify(payload)
+    except Exception as e:
+        print(f"Error loading data status: {e}")
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500

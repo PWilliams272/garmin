@@ -34,6 +34,7 @@
         <a href="{{ url_for('garmin.fitness') }}" class="tab-button{% if active_section == 'fitness' %} active{% endif %}" role="tab" aria-selected="{{ 'true' if active_section == 'fitness' else 'false' }}">Fitness</a>
         <a href="{{ url_for('garmin.activities') }}" class="tab-button{% if active_section == 'activities' %} active{% endif %}" role="tab" aria-selected="{{ 'true' if active_section == 'activities' else 'false' }}">Activities</a>
         <a href="{{ url_for('garmin.analytics') }}" class="tab-button{% if active_section == 'analytics' %} active{% endif %}" role="tab" aria-selected="{{ 'true' if active_section == 'analytics' else 'false' }}">Analytics</a>
+        <a href="{{ url_for('garmin.data_status') }}" class="tab-button{% if active_section == 'data_status' %} active{% endif %}" role="tab" aria-selected="{{ 'true' if active_section == 'data_status' else 'false' }}">Data Status</a>
     </nav>
     {% block content %}{% endblock %}
 </div>

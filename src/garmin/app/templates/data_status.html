@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}Data Status — Garmin{% endblock %}
+{% block subtitle %}Per-day pull status for every tracked dataset — green is fetched, grey is confirmed empty, amber is rate-limited (may still have data), light is untouched{% endblock %}
+{% block head %}
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+{% endblock %}
+{% block content %}
+<section class="card chart-card">
+    <div class="control-grid">
+        <label class="inline-select-control">
+            Data Source
+            <select id="source-select">
+                <option value="local" selected>Local Curated Files</option>
+                <option value="s3">S3 Curated Files</option>
+            </select>
+        </label>
+    </div>
+    <div class="status-line" id="data-status-status" style="margin-top: 12px;">Loading…</div>
+</section>
+
+<section class="card chart-card">
+    <div class="section-heading">Pull Status Calendar</div>
+    <div style="display: flex; gap: 16px; align-items: center; margin-bottom: 10px; font-size: var(--fs-sm); color: var(--lg-text-2);">
+        <span><span class="status-swatch" style="background: var(--lg-success);"></span> Fetched</span>
+        <span><span class="status-swatch" style="background: var(--lg-text-3);"></span> No data (confirmed empty)</span>
+        <span><span class="status-swatch" style="background: var(--lg-warning);"></span> Denied (rate-limited — may still have data)</span>
+        <span><span class="status-swatch" style="background: var(--lg-border);"></span> Untouched</span>
+    </div>
+    <div class="chart-host" id="status-heatmap" style="min-height: 420px;"></div>
+</section>
+
+<style>
+.status-swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    margin-right: 4px;
+    vertical-align: middle;
+}
+</style>
+
+<script>
+function token(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+function setStatus(message) {
+    document.getElementById('data-status-status').textContent = message;
+}
+
+function datasetLabel(name) {
+    return name.split('_').map((w) => w[0].toUpperCase() + w.slice(1)).join(' ');
+}
+
+function renderStatusHeatmap(payload) {
+    const codes = payload.status_codes; // {untouched:0, no_data:1, denied:2, fetched:3}
+    const colorByCode = {
+        [codes.untouched]: token('--lg-border'),
+        [codes.no_data]: token('--lg-text-3'),
+        [codes.denied]: token('--lg-warning'),
+        [codes.fetched]: token('--lg-success'),
+    };
+    // Discrete colorscale: each code occupies an equal band of [0,1], flat
+    // color within the band (no interpolation) so the heatmap reads as
+    // distinct categories rather than a gradient.
+    const n = 4;
+    const colorscale = [];
+    [codes.untouched, codes.no_data, codes.denied, codes.fetched].forEach((code, i) => {
+        const color = colorByCode[code];
+        colorscale.push([i / n, color], [(i + 1) / n, color]);
+    });
+
+    const datasets = payload.datasets;
+    const z = datasets.map((d) => d.statuses).reverse();
+    const y = datasets.map((d) => datasetLabel(d.name) + (d.kind === 'detailed' ? ' (intraday)' : ' (daily)')).reverse();
+
+    const trace = {
+        type: 'heatmap',
+        x: payload.dates,
+        y,
+        z,
+        zmin: 0,
+        zmax: n,
+        colorscale,
+        showscale: false,
+        hovertemplate: '%{y}<br>%{x}<extra></extra>',
+        xgap: 0,
+        ygap: 3,
+    };
+
+    const layout = {
+        margin: { l: 160, r: 16, t: 8, b: 36 },
+        height: Math.max(320, datasets.length * 32 + 80),
+        paper_bgcolor: 'transparent',
+        plot_bgcolor: 'transparent',
+        font: { color: token('--lg-text-2'), size: 12, family: 'IBM Plex Sans, sans-serif' },
+        xaxis: { gridcolor: 'transparent', zeroline: false },
+        yaxis: { gridcolor: 'transparent', zeroline: false, automargin: true },
+    };
+
+    Plotly.react('status-heatmap', [trace], layout, { responsive: true, displaylogo: false });
+}
+
+async function loadDataStatus(source) {
+    setStatus('Loading…');
+    try {
+        const response = await fetch('/api/data_status_data?source=' + encodeURIComponent(source));
+        if (!response.ok) throw new Error('Failed to load data status (' + response.status + ')');
+        const payload = await response.json();
+        if (payload.error) throw new Error(payload.error);
+        if (!payload.datasets.length) {
+            setStatus('No tracked datasets have any data yet.');
+            return;
+        }
+        renderStatusHeatmap(payload);
+        setStatus(`Loaded from ${payload.source} — ${payload.datasets.length} datasets, ${payload.dates.length} days each.`);
+    } catch (error) {
+        setStatus('Error: ' + error.message);
+    }
+}
+
+document.getElementById('source-select').addEventListener('change', (event) => {
+    loadDataStatus(event.target.value);
+});
+
+loadDataStatus('local');
+</script>
+{% endblock %}
