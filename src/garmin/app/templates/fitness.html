@@ -224,14 +224,14 @@ function renderRunning(payload) {
     Plotly.newPlot('run-pace-chart', [
         { x: runs.map(r => r.date), y: runs.map(r => r.pace_min_per_mile), type: 'scatter', mode: 'markers', marker: { color, size: 4, opacity: 0.35 } },
         { x: runs.map(r => r.date), y: runs.map(r => r.pace_min_per_mile_ma), type: 'scatter', mode: 'lines', line: { color, width: 2.5 } },
-    ], baseLayout('min/mi', { yaxis: { gridcolor: token('--lg-border'), zeroline: false, autorange: 'reversed', title: { text: 'min/mi', font: { size: 11 } } } }), { responsive: true, displaylogo: false });
+    ], baseLayout('Pace (min/mi, faster ↑)', { yaxis: { gridcolor: token('--lg-border'), zeroline: false, autorange: 'reversed', title: { text: 'Pace (min/mi, faster ↑)', font: { size: 11 } } } }), { responsive: true, displaylogo: false });
     metricStatPanel('run-pace-stats', runs, 'pace_min_per_mile', (v) => v.toFixed(2) + ' /mi', 'lower');
 
     const cadenceColor = token('--lg-highlight');
     Plotly.newPlot('run-cadence-chart', [
         { x: runs.map(r => r.date), y: runs.map(r => r.cadence_spm), type: 'scatter', mode: 'markers', marker: { color: cadenceColor, size: 4, opacity: 0.35 } },
         { x: runs.map(r => r.date), y: runs.map(r => r.cadence_spm_ma), type: 'scatter', mode: 'lines', line: { color: cadenceColor, width: 2.5 } },
-    ], baseLayout('steps/min'), { responsive: true, displaylogo: false });
+    ], baseLayout('Cadence (steps/min)'), { responsive: true, displaylogo: false });
     metricStatPanel('run-cadence-stats', runs, 'cadence_spm', (v) => Math.round(v) + ' spm', null);
 
     const recentWeekly = weekly.slice(-26);
@@ -239,13 +239,13 @@ function renderRunning(payload) {
     const distColor = token('--lg-success');
     Plotly.newPlot('run-weekly-distance-chart', [
         { x: recentWeekly.map(w => w.date), y: recentWeekly.map(w => w.total_distance_mi), type: 'bar', marker: { color: distColor } },
-    ], baseLayout('mi'), { responsive: true, displaylogo: false });
+    ], baseLayout('Distance (mi)'), { responsive: true, displaylogo: false });
     metricStatPanel('run-distance-stats', weekly, 'total_distance_mi', (v) => v.toFixed(1) + ' mi/wk', 'higher');
 
     const countColor = token('--lg-info');
     Plotly.newPlot('run-weekly-count-chart', [
         { x: recentWeekly.map(w => w.date), y: recentWeekly.map(w => w.run_count), type: 'bar', marker: { color: countColor } },
-    ], baseLayout('runs'), { responsive: true, displaylogo: false });
+    ], baseLayout('Runs per Week'), { responsive: true, displaylogo: false });
     metricStatPanel('run-count-stats', weekly, 'run_count', (v) => v.toFixed(1) + ' /wk', 'higher');
 }
 
@@ -279,7 +279,7 @@ function renderLifting(payload) {
     });
     renderStatPanel('lift-weight-stats', weightStatItems);
 
-    Plotly.newPlot('lift-weight-chart', traces, baseLayout('lb', { showlegend: true, legend: { orientation: 'h', y: -0.2 } }), { responsive: true, displaylogo: false });
+    Plotly.newPlot('lift-weight-chart', traces, baseLayout('Top Set Weight (lb)', { showlegend: true, legend: { orientation: 'h', y: -0.2 } }), { responsive: true, displaylogo: false });
 
     const freq = payload.weekly_frequency;
     const weeks = [...new Set(freq.map(r => r.date))].sort().slice(-26);
@@ -293,7 +293,7 @@ function renderLifting(payload) {
             marker: { color: token(meta.colorToken) },
         };
     });
-    Plotly.newPlot('lift-frequency-chart', freqTraces, baseLayout('sessions', { barmode: 'stack', showlegend: true, legend: { orientation: 'h', y: -0.2 } }), { responsive: true, displaylogo: false });
+    Plotly.newPlot('lift-frequency-chart', freqTraces, baseLayout('Sessions per Week', { barmode: 'stack', showlegend: true, legend: { orientation: 'h', y: -0.2 } }), { responsive: true, displaylogo: false });
 
     const totalPerWeek = {};
     freq.forEach((r) => { totalPerWeek[r.date] = (totalPerWeek[r.date] || 0) + r.sessions; });

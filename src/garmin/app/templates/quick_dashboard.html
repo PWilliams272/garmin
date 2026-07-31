@@ -116,7 +116,7 @@ const chartConfig = {
         maKey: 'resting_hr_ma',
         colorToken: '--lg-gold',
         kpiId: 'kpi-heart-rate',
-        yAxisTitle: 'bpm',
+        yAxisTitle: 'Resting Heart Rate (bpm)',
         format: (v) => v === null ? '—' : Math.round(v) + ' bpm',
     },
     steps: {
@@ -125,7 +125,7 @@ const chartConfig = {
         maKey: 'total_steps_ma',
         colorToken: '--lg-highlight',
         kpiId: 'kpi-steps',
-        yAxisTitle: 'steps',
+        yAxisTitle: 'Steps',
         format: (v) => v === null ? '—' : Math.round(v).toLocaleString(),
     },
     weight: {
@@ -134,7 +134,7 @@ const chartConfig = {
         maKey: 'weight_ma',
         colorToken: '--lg-success',
         kpiId: 'kpi-weight',
-        yAxisTitle: 'lb',
+        yAxisTitle: 'Weight (lb)',
         format: (v) => v === null ? '—' : v.toFixed(1) + ' lb',
         overlays: [
             {
@@ -142,21 +142,21 @@ const chartConfig = {
                 key: 'body_fat',
                 maKey: 'body_fat_ma',
                 colorToken: '--lg-warning',
-                yAxisTitle: 'body fat %',
+                yAxisTitle: 'Body Fat (%)',
             },
             {
                 checkboxId: 'overlay-bone-mass',
                 key: 'bone_mass',
                 maKey: 'bone_mass_ma',
                 colorToken: '--lg-danger',
-                yAxisTitle: 'bone mass (lb)',
+                yAxisTitle: 'Bone Mass (lb)',
             },
             {
                 checkboxId: 'overlay-muscle-mass',
                 key: 'muscle_mass',
                 maKey: 'muscle_mass_ma',
                 colorToken: '--lg-info',
-                yAxisTitle: 'muscle mass (lb)',
+                yAxisTitle: 'Muscle Mass (lb)',
             },
         ],
     },
