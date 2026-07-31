@@ -408,7 +408,7 @@ td.num, th.num {
 
 .dashboard-layout {
   display: grid;
-  grid-template-columns: 240px 1fr 200px;
+  grid-template-columns: 240px 1fr;
   gap: 16px;
   align-items: start;
 }
@@ -426,12 +426,6 @@ td.num, th.num {
   flex-direction: column;
   gap: 12px;
   min-width: 0;
-}
-
-.dashboard-summary {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
 }
 
 @media (max-width: 960px) {

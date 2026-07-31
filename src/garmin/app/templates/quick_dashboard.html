@@ -82,21 +82,6 @@
                 <div class="status-line" id="weight-outliers"></div>
             </div>
         </section>
-
-        <aside class="dashboard-summary">
-            <div class="card kpi-card">
-                <div class="kpi-label">Latest Resting HR</div>
-                <div class="kpi-value" id="kpi-heart-rate">—</div>
-            </div>
-            <div class="card kpi-card">
-                <div class="kpi-label">Latest Steps</div>
-                <div class="kpi-value" id="kpi-steps">—</div>
-            </div>
-            <div class="card kpi-card">
-                <div class="kpi-label">Latest Weight</div>
-                <div class="kpi-value" id="kpi-weight">—</div>
-            </div>
-        </aside>
     </div>
 
 <script>
@@ -118,19 +103,22 @@ const chartState = {
 
 const chartConfig = {
     heartRate: {
-        chartId: 'heart-rate-chart', outlierId: 'heart-rate-outliers', kpiId: 'kpi-heart-rate',
+        chartId: 'heart-rate-chart', outlierId: 'heart-rate-outliers',
         metricKey: 'resting_hr', colorToken: '--lg-gold', yAxisTitle: 'Resting Heart Rate (bpm)',
         format: (v) => v === null ? '—' : Math.round(v) + ' bpm',
+        betterWhen: 'lower',
     },
     steps: {
-        chartId: 'steps-chart', outlierId: 'steps-outliers', kpiId: 'kpi-steps',
+        chartId: 'steps-chart', outlierId: 'steps-outliers',
         metricKey: 'total_steps', colorToken: '--lg-highlight', yAxisTitle: 'Steps',
         format: (v) => v === null ? '—' : Math.round(v).toLocaleString(),
+        betterWhen: 'higher',
     },
     weight: {
-        chartId: 'weight-chart', outlierId: 'weight-outliers', kpiId: 'kpi-weight',
+        chartId: 'weight-chart', outlierId: 'weight-outliers',
         metricKey: 'weight', colorToken: '--lg-success', yAxisTitle: 'Weight (lb)',
         format: (v) => v === null ? '—' : v.toFixed(1) + ' lb',
+        betterWhen: null,
         overlays: [
             { checkboxId: 'overlay-body-fat', metricKey: 'body_fat', colorToken: '--lg-warning', yAxisTitle: 'Body Fat (%)' },
             { checkboxId: 'overlay-bone-mass', metricKey: 'bone_mass', colorToken: '--lg-danger', yAxisTitle: 'Bone Mass (lb)' },
@@ -189,16 +177,62 @@ function baseLayout(yTitle, extra) {
     }, extra || {});
 }
 
-function updateKpi(config, points) {
-    for (let i = points.length - 1; i >= 0; i -= 1) {
-        if (points[i].quality_tier === 'hard') continue;
-        const value = points[i][config.metricKey];
-        if (value !== null && value !== undefined) {
-            document.getElementById(config.kpiId).textContent = config.format(value);
-            return;
-        }
+// Nearest trend value to `targetDate`, searching the full (unfiltered by
+// the on-screen range) trend series so lookback windows work regardless of
+// what's currently zoomed in.
+function trendValueNear(fullTrend, targetDate) {
+    if (!fullTrend.length) return null;
+    let nearest = null;
+    let minDiff = Infinity;
+    for (const t of fullTrend) {
+        const diff = Math.abs(coerceDate(t.date) - targetDate);
+        if (diff < minDiff) { minDiff = diff; nearest = t; }
     }
-    document.getElementById(config.kpiId).textContent = '—';
+    return nearest ? nearest.mean : null;
+}
+
+function trendDeltaText(config, delta) {
+    if (delta === null || delta === undefined || Number.isNaN(delta)) return { text: '—', color: token('--lg-text-2') };
+    const arrow = delta > 0 ? '↑' : (delta < 0 ? '↓' : '→');
+    let color = token('--lg-text-2');
+    if (config.betterWhen === 'higher') color = delta >= 0 ? token('--lg-success') : token('--lg-danger');
+    if (config.betterWhen === 'lower') color = delta <= 0 ? token('--lg-success') : token('--lg-danger');
+    return { text: `${arrow} ${config.format(Math.abs(delta))}`, color };
+}
+
+// Compact "Last / Trend now / 2wk / 1mo / 2mo" stats, rendered directly in
+// the plot's own white space (right of the main plot) as Plotly
+// annotations rather than a separate stat card.
+function buildStatSummary(config, allPoints, fullTrend, anchorDate) {
+    const lines = [];
+    const validPoints = allPoints.filter((p) => p.quality_tier !== 'hard' && p[config.metricKey] !== null && p[config.metricKey] !== undefined);
+    if (validPoints.length) {
+        lines.push({ label: 'Last Reading', value: config.format(validPoints[validPoints.length - 1][config.metricKey]) });
+    }
+    if (fullTrend.length) {
+        const nowVal = fullTrend[fullTrend.length - 1].mean;
+        lines.push({ label: 'Trend Now', value: config.format(nowVal) });
+        [14, 30, 60].forEach((days) => {
+            const target = new Date(anchorDate);
+            target.setDate(target.getDate() - days);
+            const pastVal = trendValueNear(fullTrend, target);
+            const delta = pastVal === null ? null : nowVal - pastVal;
+            const { text, color } = trendDeltaText(config, delta);
+            lines.push({ label: `${days}d Trend`, value: text, color });
+        });
+    }
+    return lines;
+}
+
+function statSummaryAnnotations(lines) {
+    const labelColor = token('--lg-text-3');
+    const valueColorDefault = token('--lg-text');
+    return lines.map((line, idx) => ({
+        xref: 'paper', yref: 'paper', x: 0.845, y: 0.97 - idx * 0.115,
+        xanchor: 'left', yanchor: 'top', showarrow: false, align: 'left',
+        text: `<span style="font-size:9px;letter-spacing:0.06em;color:${labelColor}">${line.label.toUpperCase()}</span><br>`
+            + `<span style="font-size:13px;font-weight:700;color:${line.color || valueColorDefault}">${line.value}</span>`,
+    }));
 }
 
 // Renders a metric from precomputed quality-tiered points + a GP mean/68%/95%
@@ -328,12 +362,22 @@ function renderAnalyzedChart(config, anchorDate) {
     const HIST_X_START = 0.9;
 
     const overlaysChecked = (config.overlays || []).filter((o) => document.getElementById(o.checkboxId).checked);
+
+    // Last/avg/trend-window stats live in the white space right of the main
+    // plot -- computed from the full (unfiltered) trend so lookback windows
+    // work regardless of the on-screen range. Skipped when overlays are
+    // checked, since that same space is used for overlay axis labels then.
+    const annotations = overlaysChecked.length
+        ? []
+        : statSummaryAnnotations(buildStatSummary(config, entry.points || [], entry.trend_sts || [], anchorDate));
+
     const layout = baseLayout(config.yAxisTitle, {
         margin: { l: 60, r: 16, t: 8, b: 36 },
         height: 440,
         showlegend: true,
         legend: { orientation: 'h', y: -0.08 },
         shapes,
+        annotations,
     });
     layout.xaxis.domain = [0, CONTENT_X_MAX];
     layout.xaxis.showticklabels = false;
@@ -411,8 +455,6 @@ function renderAnalyzedChart(config, anchorDate) {
         outlierEl.textContent = '';
         outlierEl.title = '';
     }
-
-    updateKpi(config, allPoints);
 }
 
 function renderCharts() {
