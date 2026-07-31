@@ -385,59 +385,77 @@ function renderRunning() {
     metricStatPanel('run-count-stats', weekly, 'run_count', (v) => v.toFixed(1) + ' /wk', 'higher');
 }
 
+const LIFT_CHART_PALETTE = ['--lg-gold', '--lg-highlight', '--lg-success', '--lg-danger', '--lg-info', '--lg-warning'];
+const LIFT_CHART_MAX_EXERCISES = 6;
+
+function exerciseLabel(key) {
+    return key.split('_').map((w) => w[0].toUpperCase() + w.slice(1)).join(' ');
+}
+
 function renderLifting() {
     const payload = fitnessState.lifting;
     if (!payload) return;
     setMockStatus('lifting-mock-badge', 'lifting-status-line', payload.mock);
     const exercises = payload.exercises;
-    const exerciseMeta = {
-        bench_press: { label: 'Bench Press', colorToken: '--lg-gold' },
-        squat: { label: 'Squat', colorToken: '--lg-highlight' },
-        curl: { label: 'Bicep Curl', colorToken: '--lg-success' },
-    };
+    const exerciseOrder = payload.exercise_order || Object.keys(exercises);
 
     let anchorDate = null;
-    Object.values(exercises).forEach((rows) => {
-        if (rows.length) {
-            const d = coerceDate(rows[rows.length - 1].date);
+    Object.values(exercises).forEach(({ trend }) => {
+        if (trend && trend.length) {
+            const d = coerceDate(trend[trend.length - 1].date);
             if (!anchorDate || d > anchorDate) anchorDate = d;
         }
     });
     if (!anchorDate) anchorDate = new Date();
 
+    // Chart stays readable with only the most-trained exercises; the stat
+    // panel below lists every exercise that cleared analyze_lifting's
+    // session-count threshold, not just the ones charted.
     const traces = [];
-    const weightStatItems = [];
-    Object.entries(exerciseMeta).forEach(([key, meta]) => {
-        const allRows = exercises[key] || [];
-        const rows = filterByRange(allRows, anchorDate);
-        if (!rows.length) {
-            weightStatItems.push({ label: meta.label, value: '—', trendText: 'no data yet' });
-            return;
-        }
-        const color = token(meta.colorToken);
-        traces.push({ x: rows.map(r => r.date), y: rows.map(r => r.top_weight_lb), type: 'scatter', mode: 'markers', marker: { color, size: 4, opacity: 0.3 }, name: meta.label, showlegend: false });
-        traces.push({ x: rows.map(r => r.date), y: rows.map(r => r.top_weight_lb_ma), type: 'scatter', mode: 'lines', line: { color, width: 2.5 }, name: meta.label, showlegend: true });
+    exerciseOrder.slice(0, LIFT_CHART_MAX_EXERCISES).forEach((key, idx) => {
+        const { points, trend } = exercises[key];
+        const color = token(LIFT_CHART_PALETTE[idx % LIFT_CHART_PALETTE.length]);
+        const visiblePoints = filterByRange(points, anchorDate).filter((p) => p.quality_tier !== 'hard');
+        const visibleTrend = filterByRange(trend, anchorDate);
+        traces.push({
+            x: visiblePoints.map(p => p.date), y: visiblePoints.map(p => p.est_1rm),
+            type: 'scatter', mode: 'markers',
+            marker: { color, size: 4, opacity: visiblePoints.map(p => p.quality_tier === 'soft' ? 0.25 : 0.4) },
+            name: exerciseLabel(key), showlegend: false,
+        });
+        traces.push({
+            x: visibleTrend.map(t => t.date), y: visibleTrend.map(t => t.mean),
+            type: 'scatter', mode: 'lines', line: { color, width: 2.5 },
+            name: exerciseLabel(key), showlegend: true,
+        });
+    });
+    Plotly.newPlot('lift-weight-chart', traces, baseLayout('Estimated 1RM (lb)', { showlegend: true, legend: { orientation: 'h', y: -0.2 } }), { responsive: true, displaylogo: false });
 
-        const last30 = windowAvg(allRows, 'top_weight_lb', 30, 0, anchorDate);
-        const prior30 = windowAvg(allRows, 'top_weight_lb', 60, 30, anchorDate);
-        const trend = trendMeta(last30, prior30, 'higher');
-        const latest = allRows[allRows.length - 1].top_weight_lb;
-        weightStatItems.push({ label: meta.label, value: Math.round(latest) + ' lb', trendText: trend.text, trendColor: trend.color });
+    const weightStatItems = exerciseOrder.map((key) => {
+        const { trend, sessions } = exercises[key];
+        if (!trend.length) return { label: exerciseLabel(key), value: '—', trendText: `${sessions} sessions` };
+        const last30 = windowAvg(trend, 'mean', 30, 0, anchorDate);
+        const prior30 = windowAvg(trend, 'mean', 60, 30, anchorDate);
+        const trendInfo = trendMeta(last30, prior30, 'higher');
+        const latest = trend[trend.length - 1].mean;
+        return {
+            label: exerciseLabel(key), value: Math.round(latest) + ' lb (est. 1RM)',
+            trendText: trendInfo.text, trendColor: trendInfo.color,
+        };
     });
     renderStatPanel('lift-weight-stats', weightStatItems);
 
-    Plotly.newPlot('lift-weight-chart', traces, baseLayout('Top Set Weight (lb)', { showlegend: true, legend: { orientation: 'h', y: -0.2 } }), { responsive: true, displaylogo: false });
-
     const freq = filterByRange(payload.weekly_frequency, anchorDate);
     const weeks = [...new Set(freq.map(r => r.date))].sort();
-    const freqTraces = Object.entries(exerciseMeta).map(([key, meta]) => {
+    const chartedExercises = exerciseOrder.slice(0, LIFT_CHART_MAX_EXERCISES);
+    const freqTraces = chartedExercises.map((key, idx) => {
         const byWeek = Object.fromEntries(freq.filter(r => r.exercise === key).map(r => [r.date, r.sessions]));
         return {
             x: weeks,
             y: weeks.map(w => byWeek[w] || 0),
             type: 'bar',
-            name: meta.label,
-            marker: { color: token(meta.colorToken) },
+            name: exerciseLabel(key),
+            marker: { color: token(LIFT_CHART_PALETTE[idx % LIFT_CHART_PALETTE.length]) },
         };
     });
     Plotly.newPlot('lift-frequency-chart', freqTraces, baseLayout('Sessions per Week', { barmode: 'stack', showlegend: true, legend: { orientation: 'h', y: -0.2 } }), { responsive: true, displaylogo: false });

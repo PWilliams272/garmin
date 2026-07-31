@@ -145,3 +145,41 @@ def test_activities_real_payload_returns_none_when_no_datasets_have_data(tmp_pat
     monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
 
     assert routes_module._activities_real_payload(source='local') is None
+
+
+def test_lifting_real_payload_reads_precomputed_analyzed_data(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
+    store = routes_module.curated_local
+
+    store.merge_activity_summary('strength', pd.DataFrame([
+        {'activity_id': '1', 'date': '2024-01-01', 'duration_min': 45.0},
+    ]))
+    store.write_activity_detail('strength', '1', pd.DataFrame([
+        {'exercise': 'bench_press', 'reps': 8, 'weight_lb': 135.0, 'activity_id': '1'},
+    ]))
+    store.write_analyzed_points('strength', 'bench_press_1rm', pd.DataFrame([
+        {'date': '2024-01-01', 'est_1rm': 171.0, 'quality_tier': 'normal', 'quality_weight': 1.0},
+    ]))
+    store.write_analyzed_trend('strength', 'bench_press_1rm', pd.DataFrame([
+        {'date': '2024-01-01', 'mean': 170.0, 'lower_68': 160.0, 'upper_68': 180.0, 'lower_95': 150.0, 'upper_95': 190.0, 'day_to_day_std': 5.0},
+    ]), kind='sts')
+
+    payload = routes_module._lifting_real_payload(source='local')
+
+    assert payload is not None
+    assert payload['exercise_order'] == ['bench_press']
+    assert payload['exercises']['bench_press']['sessions'] == 1
+    assert payload['exercises']['bench_press']['trend'][0]['mean'] == 170.0
+
+
+def test_lifting_real_payload_returns_none_without_analyzed_data(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
+    store = routes_module.curated_local
+    store.merge_activity_summary('strength', pd.DataFrame([
+        {'activity_id': '1', 'date': '2024-01-01', 'duration_min': 45.0},
+    ]))
+    store.write_activity_detail('strength', '1', pd.DataFrame([
+        {'exercise': 'bench_press', 'reps': 8, 'weight_lb': 135.0, 'activity_id': '1'},
+    ]))
+
+    assert routes_module._lifting_real_payload(source='local') is None

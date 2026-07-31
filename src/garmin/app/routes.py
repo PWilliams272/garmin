@@ -9,6 +9,7 @@ from garmin.dashboard_curated import (
 from garmin.data_processor.processor import GarminDataProcessor
 from garmin.analysis.quality import classify_metric
 from garmin.analysis.trend_gp import fit_gp_trend
+from garmin.analysis.analysis_pipeline import STRENGTH_EXERCISE_CANDIDATES
 from garmin.updaters import ACTIVITY_DATASETS
 import numpy as np
 import pandas as pd
@@ -211,7 +212,6 @@ def _lifting_payload() -> dict:
     }
 
 
-REAL_LIFTING_EXERCISES = ['bench_press', 'squat', 'curl']
 
 
 def _running_real_payload(source: str = 'local') -> dict | None:
@@ -256,6 +256,12 @@ def _running_real_payload(source: str = 'local') -> dict | None:
 
 
 def _lifting_real_payload(source: str = 'local') -> dict | None:
+    """Per-exercise estimated-1RM points + STS trend, precomputed offline by
+    garmin.analysis.analysis_pipeline.analyze_lifting -- this route only reads
+    curated/analyzed/strength/<exercise>_1rm_* output, same "no live model
+    fitting" rule as the Health tab. weekly_frequency is still computed live
+    since it's a plain groupby, not a model fit.
+    """
     store = curated_s3 if source == 's3' else curated_local
     summary = store.load_activity_summary('strength')
     if summary.empty:
@@ -271,31 +277,25 @@ def _lifting_real_payload(source: str = 'local') -> dict | None:
     detail = detail.merge(summary[['activity_id', 'date']], on='activity_id', how='left')
     detail = detail.dropna(subset=['date'])
 
-    processor = GarminDataProcessor()
     exercises = {}
-    for exercise in REAL_LIFTING_EXERCISES:
-        ex_df = detail[detail['exercise'] == exercise]
-        if ex_df.empty:
-            exercises[exercise] = []
+    session_counts = detail.groupby('exercise')['activity_id'].nunique()
+    for exercise in STRENGTH_EXERCISE_CANDIDATES:
+        points = store.load_analyzed_points('strength', f'{exercise}_1rm')
+        if points.empty:
             continue
+        trend = store.load_analyzed_trend('strength', f'{exercise}_1rm', kind='sts')
+        volume_trend = store.load_analyzed_trend('strength', f'{exercise}_volume', kind='sts')
+        exercises[exercise] = {
+            'points': _timeseries_records(points),
+            'trend': _timeseries_records(trend) if not trend.empty else [],
+            'volume_trend': _timeseries_records(volume_trend) if not volume_trend.empty else [],
+            'sessions': int(session_counts.get(exercise, 0)),
+        }
 
-        top_sets = (
-            ex_df.groupby(['activity_id', 'date'], as_index=False)['weight_lb']
-            .max()
-            .rename(columns={'weight_lb': 'top_weight_lb'})
-            .dropna(subset=['top_weight_lb'])
-            .sort_values('date')
-            .reset_index(drop=True)
-        )
-        if top_sets.empty:
-            exercises[exercise] = []
-            continue
+    if not exercises:
+        return None
 
-        ma_df = processor.calculate_moving_averages(
-            top_sets, ['top_weight_lb'], kernels=['gaussian'], bandwidths=[MOCK_MA_BANDWIDTH_DAYS]
-        )
-        top_sets['top_weight_lb_ma'] = ma_df[f'top_weight_lb_gaussian_{MOCK_MA_BANDWIDTH_DAYS}']
-        exercises[exercise] = _timeseries_records(top_sets[['date', 'top_weight_lb', 'top_weight_lb_ma']])
+    exercise_order = sorted(exercises, key=lambda ex: exercises[ex]['sessions'], reverse=True)
 
     weekly_frequency = (
         detail.drop_duplicates(subset=['activity_id', 'exercise'])
@@ -306,6 +306,7 @@ def _lifting_real_payload(source: str = 'local') -> dict | None:
     )
     return {
         'exercises': exercises,
+        'exercise_order': exercise_order,
         'weekly_frequency': _timeseries_records(weekly_frequency),
     }
 
