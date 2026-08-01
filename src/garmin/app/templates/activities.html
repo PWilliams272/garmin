@@ -42,6 +42,12 @@
             <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
                 <span class="mock-badge" id="detail-mock-badge" style="display: none;">Mock data</span>
                 <span class="status-line" id="detail-status-line"></span>
+                <select id="basemap-select" class="ghost-button" style="margin-left: auto;">
+                    <option value="carto-positron">Basemap: Light</option>
+                    <option value="carto-darkmatter">Basemap: Dark</option>
+                    <option value="open-street-map">Basemap: Streets</option>
+                    <option value="white-bg">Basemap: None (route only)</option>
+                </select>
             </div>
             <div class="chart-host" id="detail-map" style="min-height: 320px;"></div>
             <div class="status-line" id="detail-map-note" style="margin-top: 6px;"></div>
@@ -116,6 +122,7 @@ const state = {
     activities: [],
     selectedId: null,
     selectedType: null,
+    detailPoints: null,
 };
 
 function formatActivityWhen(activity) {
@@ -211,28 +218,29 @@ function elapsedMinutes(points) {
     return points.map(p => ((new Date(p.timestamp).getTime() - t0) / 60000).toFixed(2));
 }
 
-// min/mile pace from mph; null (no point) below jogging speed. This isn't
-// glitch rejection (the backend already handles that) -- it's that pace is
-// 60/speed, so the few real, genuine samples right as you accelerate out
-// of a stop (0 -> 1 -> 2 -> 4 -> 7 mph) still produce real but meaningless
-// pace values that "race down" toward the actual pace over several points.
-// A 1mph cutoff let most of that transient through; ~3mph (a brisk walk)
-// is where a low-but-real speed reading stops meaning "still slowing down/
-// speeding up from a stop" and starts being an actual pace worth plotting.
+// min/mile pace from mph. The backend already nulls speed_mph at points
+// where speed is changing too fast to represent a stable pace
+// (_reject_speed_transition_points -- the acceleration/deceleration ramp
+// around a stop), so this is just a guard against literal zero/near-zero
+// speed still producing an absurd pace, not the primary defense.
 function paceMinPerMile(speedMph) {
-    return speedMph && speedMph > 3 ? 60 / speedMph : null;
+    return speedMph && speedMph > 0.5 ? 60 / speedMph : null;
 }
 
 function renderDetailMap(points) {
+    state.detailPoints = points;
     const geoPoints = points.filter(p => p.lat !== null && p.lon !== null && p.lat !== undefined && p.lon !== undefined);
     const mapNote = document.getElementById('detail-map-note');
+    const basemapControl = document.getElementById('basemap-select');
     if (!geoPoints.length) {
         Plotly.purge('detail-map');
         document.getElementById('detail-map').innerHTML = '';
         mapNote.textContent = 'No GPS track for this activity.';
+        basemapControl.style.display = 'none';
         return;
     }
     mapNote.textContent = '';
+    basemapControl.style.display = '';
     const trace = {
         type: 'scattermapbox',
         mode: 'lines+markers',
@@ -247,14 +255,21 @@ function renderDetailMap(points) {
     const layout = {
         margin: { l: 0, r: 0, t: 0, b: 0 },
         mapbox: {
-            style: 'open-street-map',
+            style: basemapControl.value || 'carto-positron',
             center: { lat: (Math.min(...lats) + Math.max(...lats)) / 2, lon: (Math.min(...lons) + Math.max(...lons)) / 2 },
             zoom: 13,
         },
+        dragmode: 'pan',
         showlegend: false,
     };
-    Plotly.newPlot('detail-map', [trace], layout, { responsive: true, displaylogo: false });
+    // scrollZoom + the mapbox dragmode above give the usual embedded-map
+    // feel: click-drag pans, scroll/pinch zooms, double-click resets.
+    Plotly.newPlot('detail-map', [trace], layout, { responsive: true, displaylogo: false, scrollZoom: true });
 }
+
+document.getElementById('basemap-select').addEventListener('change', () => {
+    if (state.detailPoints) renderDetailMap(state.detailPoints);
+});
 
 async function loadDetail(sport, activityId) {
     sport = sport || 'running';

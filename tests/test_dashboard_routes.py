@@ -405,3 +405,44 @@ def test_reject_activity_detail_outliers_skips_short_series() -> None:
 
     # Fewer than 5 valid points -- classify_metric is skipped, nothing nulled.
     assert cleaned['heart_rate_bpm'].notna().all()
+
+
+def test_reject_speed_transition_points_nulls_stop_and_go_ramp() -> None:
+    # Steady running, a sharp deceleration into a stop, a stretch stopped,
+    # then a fast ramp back up to steady speed again. Both the decel into
+    # the stop and the ramp back out change too fast (>1 mph/s) to be a
+    # stable pace, even though every value here is real, not a sensor
+    # glitch -- only samples on the "flat" side of a rapid change survive.
+    speeds = [7.0, 7.1, 0.0, 0.0, 0.0, 2.5, 5.0, 6.8, 7.0, 7.1, 6.9, 7.0]
+    detail = pd.DataFrame({
+        'timestamp': pd.date_range('2024-01-01', periods=len(speeds), freq='s'),
+        'speed_mph': speeds,
+    })
+
+    cleaned = routes_module._reject_activity_detail_outliers(detail)
+
+    # Steady running well before/after the stop-and-go window is untouched.
+    assert cleaned.loc[0, 'speed_mph'] == 7.0
+    assert cleaned.loc[8, 'speed_mph'] == 7.0
+    assert cleaned.loc[9, 'speed_mph'] == 7.1
+    assert cleaned.loc[10, 'speed_mph'] == 6.9
+    assert cleaned.loc[11, 'speed_mph'] == 7.0
+    # The genuine, flat stop is kept as real data (no rapid change either side).
+    assert cleaned.loc[3, 'speed_mph'] == 0.0
+    # The sharp decel into the stop and the ramp back out are both nulled.
+    assert pd.isna(cleaned.loc[1, 'speed_mph'])
+    assert pd.isna(cleaned.loc[5, 'speed_mph'])
+    assert pd.isna(cleaned.loc[6, 'speed_mph'])
+    assert pd.isna(cleaned.loc[7, 'speed_mph'])
+
+
+def test_reject_speed_transition_points_leaves_steady_speed_alone() -> None:
+    speeds = [7.0, 7.2, 6.9, 7.1, 7.0, 6.8, 7.3, 7.0]
+    detail = pd.DataFrame({
+        'timestamp': pd.date_range('2024-01-01', periods=len(speeds), freq='s'),
+        'speed_mph': speeds,
+    })
+
+    cleaned = routes_module._reject_speed_transition_points(detail)
+
+    assert cleaned['speed_mph'].notna().all()

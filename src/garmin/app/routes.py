@@ -609,6 +609,35 @@ def _reject_activity_detail_outliers(detail: pd.DataFrame) -> pd.DataFrame:
             continue
         classified = classify_metric(detail[['timestamp', metric]], metric, date_col='timestamp')
         detail.loc[classified['quality_tier'].to_numpy() == 'hard', metric] = None
+    return _reject_speed_transition_points(detail)
+
+
+# mph per second. Samples are ~1Hz, and a real steady run/ride's speed
+# doesn't swing this fast second to second -- anything faster is almost
+# certainly still accelerating/decelerating out of or into a stop, not a
+# stable pace. This isn't a glitch (classify_metric's job above): it's
+# real, physically accurate data, just not representative of a "pace"
+# worth plotting, and since pace = 60/speed, a few genuine low-but-
+# transient speed samples still produce wild pace values that visibly
+# "race down" toward the real pace over several points if left in.
+SPEED_TRANSITION_THRESHOLD_MPH_PER_S = 1.0
+
+
+def _reject_speed_transition_points(detail: pd.DataFrame) -> pd.DataFrame:
+    """Nulls speed_mph at points where speed is changing faster than
+    SPEED_TRANSITION_THRESHOLD_MPH_PER_S on either side (the jump into the
+    point or the jump out of it) -- flags both endpoints of a rapid ramp,
+    not just the single most extreme sample in it.
+    """
+    if "speed_mph" not in detail.columns or detail["speed_mph"].notna().sum() < 3:
+        return detail
+
+    detail = detail.copy()
+    dt_seconds = detail["timestamp"].diff().dt.total_seconds().replace(0, np.nan)
+    accel_in = detail["speed_mph"].diff().abs() / dt_seconds
+    accel_out = accel_in.shift(-1)
+    transitioning = (accel_in > SPEED_TRANSITION_THRESHOLD_MPH_PER_S) | (accel_out > SPEED_TRANSITION_THRESHOLD_MPH_PER_S)
+    detail.loc[transitioning.fillna(False), "speed_mph"] = None
     return detail
 
 
