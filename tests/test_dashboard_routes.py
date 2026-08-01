@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import pandas as pd
 
 import garmin.app.routes as routes_module
@@ -54,49 +52,14 @@ def test_quick_dashboard_data_returns_analyzed_payload(tmp_path, monkeypatch) ->
     assert payload['analyzed']['resting_hr']['trend'][0]['mean'] == 49.5
 
 
-def test_curated_metrics_dashboard_page_renders_from_cached_artifacts(tmp_path, monkeypatch) -> None:
+def test_index_redirects_to_quick_dashboard() -> None:
     app = create_app()
-    monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
-
-    artifact_dir = tmp_path / 'dashboards' / 'curated_metric_timeseries' / 'local'
-    artifact_dir.mkdir(parents=True)
-    for filename, _ in routes_module.CURATED_DASHBOARD_FILES:
-        (artifact_dir / filename).write_text('<div>cached artifact</div>', encoding='utf-8')
 
     with app.test_client() as client:
-        response = client.get('/curated_metrics_dashboard?source=local')
+        response = client.get('/', follow_redirects=False)
 
-    assert response.status_code == 200
-    assert b'Curated Metrics Dashboard' in response.data
-    assert b'cached artifact' in response.data
-
-
-def test_curated_metrics_dashboard_refresh_builds_artifacts(tmp_path, monkeypatch) -> None:
-    app = create_app()
-    monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
-
-    def write_artifacts(source: str) -> Path:
-        artifact_dir = tmp_path / 'dashboards' / 'curated_metric_timeseries' / source
-        artifact_dir.mkdir(parents=True, exist_ok=True)
-        for filename, _ in routes_module.CURATED_DASHBOARD_FILES:
-            (artifact_dir / filename).write_text(f'<div>{source} artifact</div>', encoding='utf-8')
-        return artifact_dir
-
-    def fake_build(source: str = 'local') -> str:
-        write_artifacts(source)
-        return str(tmp_path / 'dashboards' / 'curated_metric_timeseries' / source)
-
-    def fake_cache(source: str = 's3') -> Path:
-        return write_artifacts(source)
-
-    monkeypatch.setattr(routes_module, 'build_curated_dashboard_artifacts', fake_build)
-    monkeypatch.setattr(routes_module, 'cache_curated_dashboard_artifacts_locally', fake_cache)
-
-    with app.test_client() as client:
-        response = client.get('/curated_metrics_dashboard?source=s3&refresh=1')
-
-    assert response.status_code == 200
-    assert b's3 artifact' in response.data
+    assert response.status_code == 302
+    assert response.headers['Location'].endswith('/quick_dashboard')
 
 
 def test_activities_overview_from_df_aggregates_by_type_and_week() -> None:

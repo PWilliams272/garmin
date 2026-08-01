@@ -3,12 +3,11 @@
 # a zip -- scipy/scikit-learn/statsmodels alone are ~200MB+ uncompressed,
 # well past a standard Lambda's 250MB unzipped code+layers limit.
 #
-# flask/bokeh/myutils are only here because manual_build_viewer_cache.py
-# imports garmin.app.routes to reuse its payload-building functions (so the
-# cached and live-fallback payloads can't drift apart), and that module
-# transitively imports garmin.dashboard_curated -> bokeh, and
-# garmin.analysis.plotting -> myutils, at import time even though the
-# analyzer never renders a page or a Bokeh plot. Worth decoupling
+# flask/myutils are only here because manual_build_viewer_cache.py imports
+# garmin.app.routes to reuse its payload-building functions (so the cached
+# and live-fallback payloads can't drift apart), and that module
+# transitively imports garmin.data_processor.processor -> myutils at import
+# time even though the analyzer never renders a page. Worth decoupling
 # eventually (split routes.py's payload builders into a Flask-independent
 # module) to shrink this image and its dependency surface; not done here.
 # Pinned exactly (not >=) to versions verified to have prebuilt manylinux
@@ -29,5 +28,4 @@ sqlalchemy>=2.0
 tqdm>=4.67
 python-dotenv>=1.1
 flask>=3.1
-bokeh>=3.7
 myutils @ git+https://github.com/PWilliams272/myutils.git@prod

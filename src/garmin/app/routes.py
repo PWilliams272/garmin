@@ -1,11 +1,6 @@
 from flask import Blueprint, jsonify, render_template, request, url_for, redirect
 from garmin.io.curated_store import CuratedDataStore
 from garmin.io.file_manager import FileManager
-from garmin.dashboard_curated import (
-    build_curated_dashboard_artifacts,
-    cache_curated_dashboard_artifacts_locally,
-    curated_dashboard_relative_dir,
-)
 from garmin.data_processor.processor import GarminDataProcessor
 from garmin.analysis.quality import classify_metric
 from garmin.analysis.trend_gp import fit_gp_trend
@@ -40,20 +35,6 @@ fm_local = FileManager(environment='local')
 fm_s3 = FileManager(environment='aws')
 curated_local = CuratedDataStore(file_manager=fm_local)
 curated_s3 = CuratedDataStore(file_manager=fm_s3)
-
-DASHBOARD_FILES = [
-    ("health_stats_timeseries_script.html", "bokeh_script_weight_timeseries"),
-    ("health_stats_timeseries_div.html", "bokeh_div_weight_timeseries"),
-    ("heart_rate_timeseries_script.html", "bokeh_script_hr_timeseries"),
-    ("heart_rate_timeseries_div.html", "bokeh_div_hr_timeseries"),
-    ("sleep_timeseries_script.html", "bokeh_script_sleep_timeseries"),
-    ("sleep_timeseries_div.html", "bokeh_div_sleep_timeseries"),
-    ("steps_timeseries_script.html", "bokeh_script_steps_timeseries"),
-    ("steps_timeseries_div.html", "bokeh_div_steps_timeseries"),
-]
-
-CURATED_DASHBOARD_FILES = DASHBOARD_FILES
-
 
 # dataset -> metrics, matching garmin.analysis.analysis_pipeline.HEALTH_METRICS.
 # The web app only ever reads the precomputed curated/analyzed/ layer here
@@ -819,59 +800,7 @@ RECOMMENDATION_POOL = [
 
 @bp.route('/')
 def index():
-    # Redirect /garmin to /garmin/metrics_dashboard
-    return redirect(url_for('garmin.metrics_dashboard'))
-
-@bp.route('/metrics_dashboard')
-def metrics_dashboard():
-    refresh = request.args.get('refresh', '0') == '1'
-    dashboard_dir = os.path.join(fm_local.local_dir, "dashboards/metric_timeseries")
-    os.makedirs(dashboard_dir, exist_ok=True)
-    context = {}
-    for fname, context_key in DASHBOARD_FILES:
-        local_path = os.path.join(dashboard_dir, fname)
-        if refresh or not os.path.exists(local_path):
-            # Fetch from S3 and save locally
-            text = fm_s3.read_text(f"dashboards/metric_timeseries/{fname}")
-            with open(local_path, 'w', encoding='utf-8') as f:
-                f.write(text)
-        else:
-            with open(local_path, 'r', encoding='utf-8') as f:
-                text = f.read()
-        context[context_key] = text
-    return render_template(
-        'metrics_dashboard.html',
-        **context
-    )
-
-
-@bp.route('/curated_metrics_dashboard')
-def curated_metrics_dashboard():
-    refresh = request.args.get('refresh', '0') == '1'
-    source = request.args.get('source', DEFAULT_SOURCE)
-    if source not in {'local', 's3'}:
-        source = DEFAULT_SOURCE
-
-    dashboard_dir = os.path.join(fm_local.local_dir, curated_dashboard_relative_dir(source))
-    os.makedirs(dashboard_dir, exist_ok=True)
-
-    if refresh:
-        build_curated_dashboard_artifacts(source=source)
-        if source == 's3':
-            cache_curated_dashboard_artifacts_locally(source=source)
-
-    context = {'source': source}
-    for fname, context_key in CURATED_DASHBOARD_FILES:
-        local_path = os.path.join(dashboard_dir, fname)
-        if not os.path.exists(local_path):
-            if source == 's3':
-                cache_curated_dashboard_artifacts_locally(source=source)
-            else:
-                build_curated_dashboard_artifacts(source=source)
-        with open(local_path, 'r', encoding='utf-8') as f:
-            context[context_key] = f.read()
-
-    return render_template('curated_metrics_dashboard.html', **context)
+    return redirect(url_for('garmin.quick_dashboard'))
 
 
 @bp.route('/quick_dashboard')

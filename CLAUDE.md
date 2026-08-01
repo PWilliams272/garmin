@@ -1,6 +1,6 @@
 # garmin
 
-Pulls, processes, and visualizes personal Garmin Connect data. Python 3.11, Flask, pandas, Plotly (new dashboard) / Bokeh (legacy dashboard), boto3.
+Pulls, processes, and visualizes personal Garmin Connect data. Python 3.11, Flask, pandas, Plotly, boto3.
 
 ## Architecture
 
@@ -12,7 +12,7 @@ Layered pipeline, each stage only reads the previous stage's output — nothing 
 - `garmin/io/` — `file_manager.py` (local-vs-S3 abstraction), `curated_store.py` (curated parquet read/write), `db_manager.py` (legacy DB path, being retired).
 - `garmin/analysis/` — quality classification (`quality.py`), trend fitting (`trend_gp.py`, `trend_sts.py`), pipeline entrypoint (`analysis_pipeline.py`). Run offline via `garmin/scripts/manual_analyze_metrics.py`; the web app only ever reads the `curated/analyzed/` output. The multiscale GP fit is currently disabled (`FIT_GP_TREND = False`, memory-heavy and not rendered anywhere — see `GARMIN_HANDOFF.md`).
 - `garmin/scripts/manual_build_viewer_cache.py` — precomputes each page's full web-response JSON into `curated/viewer_cache/<page>_<source>.json`, reusing `garmin/app/routes.py`'s own payload-builder functions. Routes try this cache first (`routes._cached_or_live`), falling back to live assembly if missing. Run after `manual_analyze_metrics.py`.
-- `garmin/app/` — Flask dashboard. `/quick_dashboard` is the current Plotly-based app (kaya-style); `/metrics_dashboard` and `/curated_metrics_dashboard` are the older Bokeh-based routes, not yet retired.
+- `garmin/app/` — Flask dashboard, Plotly-based (kaya-style). `/quick_dashboard` (Health), `/fitness` (running/lifting), `/activities` (browsable per-activity list + FIT-based map/pace/HR/cadence/power detail), `/data_status`. The old Bokeh routes/templates (`/metrics_dashboard`, `/curated_metrics_dashboard`) were retired 2026-08-01.
 
 Production pipeline (two Lambdas, see `GARMIN_HANDOFF.md` for full detail): `garmin-data-updater` (pull, zip-packaged, daily 3:00 UTC) → `garmin-data-analyzer` (analyze + viewer-cache build, container image, daily 3:30 UTC). Only these two steps run on a schedule — activity data (running/strength/lifting) exists locally only as of 2026-07-31, not yet backfilled to S3.
 
