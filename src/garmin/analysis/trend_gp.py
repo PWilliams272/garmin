@@ -64,6 +64,13 @@ def _robust_noise_variance(y: np.ndarray) -> float:
 # very short length scale rather than smoothing over them.
 MIN_LENGTH_SCALE_DAYS = 7.0
 
+# Minimum per-point kernel-diagonal regularization. Without this floor, a
+# constant-valued series (base_noise_variance == 0) with any full-confidence,
+# same-day points produces an exactly-singular (not just ill-conditioned)
+# kernel matrix -- see the alpha computation below for why any positive
+# value fixes this exactly, regardless of how tiny.
+ALPHA_FLOOR = 1e-6
+
 Z_68 = 1.0
 Z_95 = 1.959963984540054
 
@@ -116,6 +123,15 @@ def fit_gp_trend(
     value_variance = float(np.var(y)) if len(y) > 1 else 1.0
     base_noise_variance = _robust_noise_variance(y)
     alpha = base_noise_variance + (1.0 - weight_arr) * value_variance * SOFT_NOISE_MULTIPLIER
+    # A genuinely constant series (e.g. an activity type whose metric is
+    # always ~0, like indoor climbing's GPS distance) drives both
+    # base_noise_variance and value_variance to exactly 0, which -- combined
+    # with same-day activities sharing an identical x -- makes the kernel
+    # matrix exactly singular (not just ill-conditioned) and Cholesky raises
+    # LinAlgError. Any positive floor breaks the degeneracy mathematically
+    # (duplicate rows only become rank-deficient at alpha == 0 exactly), so
+    # this is a correctness floor, not a tuning knob.
+    alpha = np.maximum(alpha, ALPHA_FLOOR)
 
     kernel = ConstantKernel(1.0, (1e-2, 1e3)) * RBF(
         length_scale=length_scale_days, length_scale_bounds=(MIN_LENGTH_SCALE_DAYS, 365.0)
@@ -223,6 +239,15 @@ def fit_gp_multiscale_trend(
     value_variance = float(np.var(y)) if len(y) > 1 else 1.0
     base_noise_variance = _robust_noise_variance(y)
     alpha = base_noise_variance + (1.0 - weight_arr) * value_variance * SOFT_NOISE_MULTIPLIER
+    # A genuinely constant series (e.g. an activity type whose metric is
+    # always ~0, like indoor climbing's GPS distance) drives both
+    # base_noise_variance and value_variance to exactly 0, which -- combined
+    # with same-day activities sharing an identical x -- makes the kernel
+    # matrix exactly singular (not just ill-conditioned) and Cholesky raises
+    # LinAlgError. Any positive floor breaks the degeneracy mathematically
+    # (duplicate rows only become rank-deficient at alpha == 0 exactly), so
+    # this is a correctness floor, not a tuning knob.
+    alpha = np.maximum(alpha, ALPHA_FLOOR)
 
     slow_kernel = ConstantKernel(1.0, (1e-2, 1e3)) * RBF(
         length_scale=slow_length_scale_days, length_scale_bounds=slow_length_scale_bounds
