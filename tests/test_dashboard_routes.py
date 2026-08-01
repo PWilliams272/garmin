@@ -153,6 +153,49 @@ def test_activities_real_payload_returns_none_when_no_datasets_have_data(tmp_pat
     assert routes_module._activities_real_payload(source='local') is None
 
 
+def test_activities_list_payload_includes_avg_hr_and_all_activities(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
+    store = routes_module.curated_local
+    store.merge_activity_summary('running', pd.DataFrame([
+        {'activity_id': '1', 'date': '2024-01-01', 'name': 'Run A', 'duration_min': 30.0, 'distance_mi': 3.0, 'avg_hr': 140.0},
+        {'activity_id': '2', 'date': '2024-01-08', 'name': 'Run B', 'duration_min': 45.0, 'distance_mi': 5.0, 'avg_hr': 150.0},
+    ]))
+    store.merge_activity_summary('strength', pd.DataFrame([
+        {'activity_id': '3', 'date': '2024-01-05', 'name': 'Lift', 'duration_min': 60.0, 'avg_hr': 110.0},
+    ]))
+
+    payload = routes_module._activities_list_payload(source='local')
+
+    assert payload is not None
+    assert set(payload['activity_types']) == {'running', 'strength'}
+    assert len(payload['activities']) == 3
+    # Sorted newest-first by date.
+    assert [a['activity_id'] for a in payload['activities']] == ['2', '3', '1']
+    run_b = payload['activities'][0]
+    assert run_b['avg_hr'] == 150.0
+    lift = payload['activities'][1]
+    assert lift['distance_mi'] is None
+
+
+def test_activities_list_payload_returns_none_when_no_data(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
+
+    assert routes_module._activities_list_payload(source='local') is None
+
+
+def test_activities_list_data_route_falls_back_to_mock(monkeypatch) -> None:
+    app = create_app()
+    monkeypatch.setattr(routes_module, '_activities_list_payload', lambda source='local': None)
+
+    with app.test_client() as client:
+        response = client.get('/api/activities_list_data?source=local')
+
+    payload = response.get_json()
+    assert payload['mock'] is True
+    assert len(payload['activities']) > 0
+    assert 'avg_hr' in payload['activities'][0]
+
+
 def test_lifting_real_payload_reads_precomputed_analyzed_data(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
     store = routes_module.curated_local

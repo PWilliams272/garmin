@@ -205,7 +205,7 @@ def _timeseries_records(df: pd.DataFrame) -> list[dict[str, object]]:
         for key, value in row.items():
             if key == 'date' and pd.notnull(value):
                 cleaned[key] = pd.Timestamp(value).date().isoformat()
-            elif key == 'timestamp' and pd.notnull(value):
+            elif key in ('timestamp', 'start_time') and pd.notnull(value):
                 cleaned[key] = pd.Timestamp(value).isoformat()
             elif pd.isna(value):
                 cleaned[key] = None
@@ -464,6 +464,25 @@ def _mock_activities() -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values('date').reset_index(drop=True)
 
 
+def _mock_activities_list_payload() -> dict:
+    """Same synthetic log as _mock_activities(), reshaped to match
+    _activities_list_payload's fuller per-activity record (adds activity_id,
+    name, avg_hr, a synthetic start_time) for the Activities tab's list.
+    """
+    rng = np.random.default_rng(101)
+    df = _mock_activities().reset_index(drop=True)
+    avg_hr_by_type = {'running': 148, 'cycling': 132, 'climbing': 118, 'lifting': 110, 'swimming': 138}
+    df['activity_id'] = [f'mock-{i}' for i in df.index]
+    df['name'] = df['type'].str.title() + ' Activity'
+    df['avg_hr'] = df['type'].map(lambda t: round(float(rng.normal(avg_hr_by_type.get(t, 130), 8))))
+    df['start_time'] = df['date'] + pd.to_timedelta(rng.integers(6, 20, size=len(df)), unit='h')
+    df = df.sort_values('date', ascending=False).reset_index(drop=True)
+    return {
+        'activity_types': sorted(df['type'].unique().tolist()),
+        'activities': _timeseries_records(df),
+    }
+
+
 def _activities_real_payload(source: str = 'local') -> dict | None:
     """Real multi-sport activity overview, built from every registered activity dataset's summary.
 
@@ -489,6 +508,43 @@ def _activities_real_payload(source: str = 'local') -> dict | None:
     df = pd.concat(frames, ignore_index=True)
     df['date'] = pd.to_datetime(df['date'])
     return _activities_overview_from_df(df)
+
+
+ACTIVITIES_LIST_COLUMNS = ['activity_id', 'date', 'start_time', 'type', 'name', 'duration_min', 'distance_mi', 'avg_hr']
+
+
+def _activities_list_payload(source: str = 'local') -> dict | None:
+    """Every pulled activity across every sport, for the Activities tab's
+    browsable list -- unlike _activities_real_payload's `recent_activities`
+    (capped at 15, no avg_hr), this is the full history with everything the
+    list/filter UI needs. `start_time` is only present for activities
+    pulled after ActivityPuller started capturing it (2026-07-31) -- older
+    rows fall back to date-only, no re-pull is triggered here to backfill it.
+    """
+    store = curated_s3 if source == 's3' else curated_local
+    frames = []
+    for dataset in ACTIVITY_DATASETS:
+        summary = store.load_activity_summary(dataset)
+        if summary.empty:
+            continue
+        frame = summary.copy()
+        frame['type'] = dataset
+        for col in ACTIVITIES_LIST_COLUMNS:
+            if col not in frame.columns:
+                frame[col] = None
+        frames.append(frame[ACTIVITIES_LIST_COLUMNS])
+
+    if not frames:
+        return None
+
+    df = pd.concat(frames, ignore_index=True)
+    df['date'] = pd.to_datetime(df['date'])
+    df = df.sort_values('date', ascending=False).reset_index(drop=True)
+
+    return {
+        'activity_types': sorted(df['type'].unique().tolist()),
+        'activities': _timeseries_records(df),
+    }
 
 
 def _activities_overview_payload() -> dict:
@@ -804,6 +860,28 @@ def api_activities_overview_data():
         return jsonify(payload)
     except Exception as e:
         print(f"Error loading activities overview data: {e}")
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/api/activities_list_data')
+def api_activities_list_data():
+    import traceback
+
+    source = request.args.get('source', 'local')
+    if source not in {'local', 's3'}:
+        source = 'local'
+
+    try:
+        is_mock = False
+        payload = _activities_list_payload(source=source)
+        if payload is None:
+            payload = _mock_activities_list_payload()
+            is_mock = True
+        payload['mock'] = is_mock
+        return jsonify(payload)
+    except Exception as e:
+        print(f"Error loading activities list data: {e}")
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 

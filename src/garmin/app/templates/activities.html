@@ -1,79 +1,52 @@
 {% extends "base.html" %}
 {% block title %}Activities — Garmin{% endblock %}
-{% block subtitle %}Everything you've logged, and a drill-in view for a single activity{% endblock %}
+{% block subtitle %}Every logged activity, with a detailed per-activity drill-in — map, pace, heart rate, cadence, power{% endblock %}
 {% block head %}
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 {% endblock %}
 {% block content %}
-<div style="display: flex; align-items: center; gap: 10px;">
-    <span class="mock-badge" id="activities-mock-badge" style="display: none;">Mock data</span>
-    <span class="status-line" id="activities-status-line">Loading…</span>
-</div>
+<div class="dashboard-layout dashboard-layout-wide-sidebar">
+    <aside class="dashboard-sidebar">
+        <section class="card chart-card">
+            <div class="section-heading">Activities</div>
+            <span class="mock-badge" id="activities-mock-badge" style="display: none; margin-bottom: 8px;">Mock data</span>
+            <div class="control-grid control-grid-stack">
+                <label class="inline-select-control">
+                    Type
+                    <select id="type-filter">
+                        <option value="all">All Types</option>
+                    </select>
+                </label>
+                <label class="inline-select-control">
+                    Sort By
+                    <select id="sort-by">
+                        <option value="date_desc">Newest First</option>
+                        <option value="date_asc">Oldest First</option>
+                        <option value="duration_desc">Longest Duration</option>
+                        <option value="distance_desc">Longest Distance</option>
+                        <option value="hr_desc">Highest Avg HR</option>
+                    </select>
+                </label>
+            </div>
+            <div class="status-line" id="activities-status-line" style="margin-top: 10px;">Loading…</div>
+            <div class="activity-list" id="activity-list" style="margin-top: 12px;"></div>
+        </section>
+    </aside>
 
-<section class="kpi-grid">
-    <div class="card kpi-card">
-        <div class="kpi-label">Total Activities</div>
-        <div class="kpi-value" id="kpi-total-activities">—</div>
-    </div>
-    <div class="card kpi-card">
-        <div class="kpi-label">Total Distance</div>
-        <div class="kpi-value" id="kpi-total-distance">—</div>
-    </div>
-    <div class="card kpi-card">
-        <div class="kpi-label">Total Hours</div>
-        <div class="kpi-value" id="kpi-total-hours">—</div>
-    </div>
-</section>
+    <section class="dashboard-charts">
+        <div class="card chart-card">
+            <div class="section-heading" style="display: flex; justify-content: space-between; align-items: baseline;">
+                <span id="detail-activity-name">Select an activity</span>
+                <span class="status-line" id="detail-activity-meta"></span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                <span class="mock-badge" id="detail-mock-badge" style="display: none;">Mock data</span>
+                <span class="status-line" id="detail-status-line"></span>
+            </div>
+            <div class="chart-host" id="detail-map" style="min-height: 320px;"></div>
+            <div class="status-line" id="detail-map-note" style="margin-top: 6px;"></div>
+        </div>
 
-<section class="chart-grid">
-    <div class="card chart-card chart-card-wide">
-        <div class="section-heading">Activities per Week, by Type</div>
-        <div class="chart-host" id="weekly-type-chart"></div>
-    </div>
-    <div class="card chart-card">
-        <div class="section-heading">Weekly Distance</div>
-        <div class="chart-host" id="weekly-distance-chart"></div>
-    </div>
-    <div class="card chart-card">
-        <div class="section-heading">Weekly Hours</div>
-        <div class="chart-host" id="weekly-hours-chart"></div>
-    </div>
-</section>
-
-<section class="card chart-card">
-    <div class="section-heading">Recent Activities</div>
-    <div class="table-scroll">
-        <table>
-            <thead>
-                <tr>
-                    <th>Date</th>
-                    <th>Type</th>
-                    <th class="num">Duration</th>
-                    <th class="num">Distance</th>
-                </tr>
-            </thead>
-            <tbody id="recent-activities-body">
-                <tr><td colspan="4" class="status-line">Loading…</td></tr>
-            </tbody>
-        </table>
-    </div>
-    <div class="status-line" style="margin-top: 10px;">Click a row to load its detail — only activities pulled via manual_fetch_activity_detail.py have real per-point data so far; other rows fall back to the sample dive below.</div>
-</section>
-
-<section class="card chart-card">
-    <div class="section-heading" style="display: flex; justify-content: space-between; align-items: baseline;">
-        <span id="detail-activity-name">Sample Activity Detail</span>
-        <span class="status-line" id="detail-activity-meta"></span>
-    </div>
-    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-        <span class="mock-badge" id="detail-mock-badge" style="display: none;">Mock data</span>
-        <span class="status-line" id="detail-status-line">Loading…</span>
-    </div>
-
-    <div class="chart-host" id="detail-map" style="min-height: 320px;"></div>
-    <div class="status-line" id="detail-map-note" style="margin-top: 6px;"></div>
-
-    <section class="chart-grid" style="margin-top: 16px;">
         <div class="card chart-card">
             <div class="section-heading">Pace</div>
             <div class="chart-host" id="detail-pace-chart"></div>
@@ -95,7 +68,7 @@
             <div class="chart-host" id="detail-zones-chart"></div>
         </div>
     </section>
-</section>
+</div>
 
 <script>
 function token(name) {
@@ -116,63 +89,113 @@ function baseLayout(yTitle, extra) {
 
 const TYPE_COLORS = {
     running: '--lg-gold',
+    strength: '--lg-success',
     cycling: '--lg-highlight',
+    indoor_cycling: '--lg-highlight',
     climbing: '--lg-danger',
-    lifting: '--lg-success',
-    swimming: '--lg-info',
+    bouldering: '--lg-danger',
+    rock_climbing: '--lg-danger',
+    lap_swimming: '--lg-info',
+    open_water_swimming: '--lg-info',
+    hiking: '--lg-warning',
+    hiit: '--lg-danger',
+    tennis: '--lg-success',
+    pickleball: '--lg-success',
 };
 
-function setMockStatus(badgeId, statusId, isMock) {
+function setMockStatus(badgeId, statusId, isMock, mockText, realText) {
     document.getElementById(badgeId).style.display = isMock ? '' : 'none';
-    document.getElementById(statusId).textContent = isMock
-        ? 'Synthetic example — replace once real activity data is flowing.'
-        : 'Real data from your curated activity history.';
+    document.getElementById(statusId).textContent = isMock ? mockText : realText;
 }
 
-async function loadOverview() {
-    const response = await fetch('/api/activities_overview_data');
+function typeLabel(type) {
+    return type.split('_').map((w) => w[0].toUpperCase() + w.slice(1)).join(' ');
+}
+
+const state = {
+    activities: [],
+    selectedId: null,
+    selectedType: null,
+};
+
+function formatActivityWhen(activity) {
+    if (activity.start_time) {
+        const d = new Date(activity.start_time);
+        return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+            + ' · ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    }
+    return activity.date;
+}
+
+function applyFiltersAndRenderList() {
+    const typeFilter = document.getElementById('type-filter').value;
+    const sortBy = document.getElementById('sort-by').value;
+
+    let items = state.activities.filter((a) => typeFilter === 'all' || a.type === typeFilter);
+    const sorters = {
+        date_desc: (a, b) => (b.start_time || b.date).localeCompare(a.start_time || a.date),
+        date_asc: (a, b) => (a.start_time || a.date).localeCompare(b.start_time || b.date),
+        duration_desc: (a, b) => (b.duration_min || 0) - (a.duration_min || 0),
+        distance_desc: (a, b) => (b.distance_mi || 0) - (a.distance_mi || 0),
+        hr_desc: (a, b) => (b.avg_hr || 0) - (a.avg_hr || 0),
+    };
+    items = items.slice().sort(sorters[sortBy] || sorters.date_desc);
+
+    const list = document.getElementById('activity-list');
+    list.innerHTML = '';
+    items.forEach((activity) => {
+        const el = document.createElement('div');
+        el.className = 'activity-list-item' + (activity.activity_id === state.selectedId ? ' active' : '');
+        const distance = activity.distance_mi === null || activity.distance_mi === undefined ? null : activity.distance_mi.toFixed(1) + ' mi';
+        const duration = activity.duration_min === null || activity.duration_min === undefined ? '—' : activity.duration_min.toFixed(0) + ' min';
+        const hr = activity.avg_hr === null || activity.avg_hr === undefined ? null : Math.round(activity.avg_hr) + ' bpm';
+        const statLine = [distance, duration, hr].filter(Boolean).join(' · ');
+        el.innerHTML = `
+            <div class="activity-list-item-top">
+                <span class="activity-list-item-name"><span class="activity-type-dot" style="background:${token(TYPE_COLORS[activity.type] || '--lg-gold')}"></span>${activity.name || typeLabel(activity.type)}</span>
+            </div>
+            <div class="activity-list-item-meta"><span>${typeLabel(activity.type)}</span><span>${formatActivityWhen(activity)}</span></div>
+            <div class="activity-list-item-meta"><span>${statLine}</span></div>
+        `;
+        el.addEventListener('click', () => selectActivity(activity.activity_id, activity.type));
+        list.appendChild(el);
+    });
+
+    if (!items.length) {
+        list.innerHTML = '<div class="status-line" style="padding: 12px 16px;">No activities match this filter.</div>';
+    }
+}
+
+function selectActivity(activityId, type) {
+    state.selectedId = activityId;
+    state.selectedType = type;
+    applyFiltersAndRenderList();
+    loadDetail(type, activityId).catch((error) => console.error('Failed to load activity detail', error));
+}
+
+async function loadActivities() {
+    const response = await fetch('/api/activities_list_data');
     const payload = await response.json();
     if (payload.error) throw new Error(payload.error);
-    setMockStatus('activities-mock-badge', 'activities-status-line', payload.mock);
+    setMockStatus(
+        'activities-mock-badge', 'activities-status-line', payload.mock,
+        'Synthetic example data.', `${payload.activities.length} activities loaded.`
+    );
 
-    document.getElementById('kpi-total-activities').textContent = payload.kpis.total_activities;
-    document.getElementById('kpi-total-distance').textContent = payload.kpis.total_distance_mi.toFixed(0) + ' mi';
-    document.getElementById('kpi-total-hours').textContent = payload.kpis.total_hours.toFixed(0) + ' hr';
-
-    const weeks = [...new Set(payload.weekly_by_type.map(r => r.date))].sort();
-    const typeTraces = payload.activity_types.map((type) => {
-        const byWeek = Object.fromEntries(payload.weekly_by_type.filter(r => r.type === type).map(r => [r.date, r.count]));
-        return {
-            x: weeks,
-            y: weeks.map(w => byWeek[w] || 0),
-            type: 'bar',
-            name: type,
-            marker: { color: token(TYPE_COLORS[type] || '--lg-gold') },
-        };
+    const typeSelect = document.getElementById('type-filter');
+    payload.activity_types.forEach((type) => {
+        const option = document.createElement('option');
+        option.value = type;
+        option.textContent = typeLabel(type);
+        typeSelect.appendChild(option);
     });
-    Plotly.newPlot('weekly-type-chart', typeTraces, baseLayout('Activities per Week', { barmode: 'stack', showlegend: true, legend: { orientation: 'h', y: -0.2 } }), { responsive: true, displaylogo: false });
 
-    const totals = payload.weekly_totals;
-    Plotly.newPlot('weekly-distance-chart', [
-        { x: totals.map(r => r.date), y: totals.map(r => r.total_distance_mi), type: 'bar', marker: { color: token('--lg-gold') } },
-    ], baseLayout('Distance (mi)'), { responsive: true, displaylogo: false });
+    state.activities = payload.activities;
+    applyFiltersAndRenderList();
 
-    Plotly.newPlot('weekly-hours-chart', [
-        { x: totals.map(r => r.date), y: totals.map(r => r.total_hours), type: 'bar', marker: { color: token('--lg-highlight') } },
-    ], baseLayout('Hours'), { responsive: true, displaylogo: false });
-
-    const tbody = document.getElementById('recent-activities-body');
-    tbody.innerHTML = '';
-    payload.recent_activities.forEach((activity) => {
-        const row = document.createElement('tr');
-        row.style.cursor = 'pointer';
-        const distance = activity.distance_mi === null ? '—' : activity.distance_mi.toFixed(1) + ' mi';
-        row.innerHTML = `<td>${activity.date}</td><td>${activity.type}</td><td class="num">${activity.duration_min.toFixed(0)} min</td><td class="num">${distance}</td>`;
-        row.addEventListener('click', () => {
-            loadDetail(activity.type, activity.activity_id || null).catch((error) => console.error('Failed to load activity detail', error));
-        });
-        tbody.appendChild(row);
-    });
+    if (payload.activities.length) {
+        selectActivity(payload.activities[0].activity_id, payload.activities[0].type);
+    }
 }
 
 const DETAIL_CHART_COLORS = {
@@ -234,7 +257,11 @@ async function loadDetail(sport, activityId) {
     const response = await fetch(url);
     const payload = await response.json();
     if (payload.error) throw new Error(payload.error);
-    setMockStatus('detail-mock-badge', 'detail-status-line', payload.mock);
+    setMockStatus(
+        'detail-mock-badge', 'detail-status-line', payload.mock,
+        'Synthetic example — no real detail data pulled for this activity yet.',
+        'Real data from your curated activity history.'
+    );
 
     document.getElementById('detail-activity-name').textContent = payload.activity.name || 'Activity';
     document.getElementById('detail-activity-meta').textContent =
@@ -267,7 +294,12 @@ async function loadDetail(sport, activityId) {
     ], baseLayout('Time in Zone (minutes)'), { responsive: true, displaylogo: false });
 }
 
-loadOverview().catch((error) => console.error('Failed to load activities overview', error));
-loadDetail('running', null).catch((error) => console.error('Failed to load activity detail', error));
+document.getElementById('type-filter').addEventListener('change', applyFiltersAndRenderList);
+document.getElementById('sort-by').addEventListener('change', applyFiltersAndRenderList);
+
+loadActivities().catch((error) => {
+    console.error('Failed to load activities', error);
+    document.getElementById('activities-status-line').textContent = 'Error: ' + error.message;
+});
 </script>
 {% endblock %}

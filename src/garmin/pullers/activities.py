@@ -59,6 +59,7 @@ class ActivityPuller:
             rows.append({
                 "activity_id": str(a["activityId"]),
                 "date": pd.to_datetime(a["startTimeLocal"]).date(),
+                "start_time": a["startTimeLocal"],
                 "name": a.get("activityName"),
                 "distance_mi": round(distance_m / METERS_PER_MILE, 2) if distance_m is not None else None,
                 "duration_min": round(duration_s / 60, 1) if duration_s is not None else None,
@@ -87,6 +88,7 @@ class ActivityPuller:
             rows.append({
                 "activity_id": str(a["activityId"]),
                 "date": pd.to_datetime(a["startTimeLocal"]).date(),
+                "start_time": a["startTimeLocal"],
                 "name": a.get("activityName"),
                 "distance_mi": round(distance_m / METERS_PER_MILE, 2) if distance_m is not None else None,
                 "duration_min": round(duration_s / 60, 1) if duration_s is not None else None,
@@ -108,6 +110,7 @@ class ActivityPuller:
             rows.append({
                 "activity_id": str(a["activityId"]),
                 "date": pd.to_datetime(a["startTimeLocal"]).date(),
+                "start_time": a["startTimeLocal"],
                 "name": a.get("activityName"),
                 "duration_min": round(duration_s / 60, 1) if duration_s is not None else None,
                 "calories": a.get("calories"),

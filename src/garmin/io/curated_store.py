@@ -223,7 +223,7 @@ class CuratedDataStore:
     @staticmethod
     def _prepare_for_parquet(df: pd.DataFrame) -> pd.DataFrame:
         output = df.copy()
-        for column in ["date", "query_date", "date_pulled", "start_gmt", "end_gmt", "timestamp"]:
+        for column in ["date", "query_date", "date_pulled", "start_gmt", "end_gmt", "timestamp", "start_time"]:
             if column in output.columns:
                 output[column] = pd.to_datetime(output[column])
         if "date_time_utc" in output.columns:

@@ -1,7 +1,45 @@
 {% extends "base.html" %}
 {% block title %}Analytics — Garmin{% endblock %}
 {% block subtitle %}Deeper analysis and predictive modeling built on the curated data above{% endblock %}
+{% block head %}
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+{% endblock %}
 {% block content %}
+<div style="display: flex; align-items: center; gap: 10px;">
+    <span class="mock-badge" id="overview-mock-badge" style="display: none;">Mock data</span>
+    <span class="status-line" id="overview-status-line">Loading…</span>
+</div>
+
+<section class="kpi-grid">
+    <div class="card kpi-card">
+        <div class="kpi-label">Total Activities</div>
+        <div class="kpi-value" id="kpi-total-activities">—</div>
+    </div>
+    <div class="card kpi-card">
+        <div class="kpi-label">Total Distance</div>
+        <div class="kpi-value" id="kpi-total-distance">—</div>
+    </div>
+    <div class="card kpi-card">
+        <div class="kpi-label">Total Hours</div>
+        <div class="kpi-value" id="kpi-total-hours">—</div>
+    </div>
+</section>
+
+<section class="chart-grid">
+    <div class="card chart-card chart-card-wide">
+        <div class="section-heading">Activities per Week, by Type</div>
+        <div class="chart-host" id="weekly-type-chart"></div>
+    </div>
+    <div class="card chart-card">
+        <div class="section-heading">Weekly Distance</div>
+        <div class="chart-host" id="weekly-distance-chart"></div>
+    </div>
+    <div class="card chart-card">
+        <div class="section-heading">Weekly Hours</div>
+        <div class="chart-host" id="weekly-hours-chart"></div>
+    </div>
+</section>
+
 <section class="chart-grid">
     <div class="card chart-card">
         <div class="section-heading" style="display: flex; justify-content: space-between; align-items: baseline;">
@@ -34,6 +72,78 @@
 </section>
 
 <script>
+function token(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+function baseLayout(yTitle, extra) {
+    return Object.assign({
+        margin: { l: 56, r: 16, t: 8, b: 36 },
+        paper_bgcolor: 'transparent',
+        plot_bgcolor: 'transparent',
+        font: { color: token('--lg-text-2'), size: 12, family: 'IBM Plex Sans, sans-serif' },
+        xaxis: { gridcolor: token('--lg-border'), zeroline: false },
+        yaxis: { gridcolor: token('--lg-border'), zeroline: false, title: { text: yTitle, font: { size: 11 } } },
+        showlegend: false,
+    }, extra || {});
+}
+
+const TYPE_COLORS = {
+    running: '--lg-gold',
+    strength: '--lg-success',
+    cycling: '--lg-highlight',
+    indoor_cycling: '--lg-highlight',
+    climbing: '--lg-danger',
+    bouldering: '--lg-danger',
+    rock_climbing: '--lg-danger',
+    lap_swimming: '--lg-info',
+    open_water_swimming: '--lg-info',
+    hiking: '--lg-warning',
+    hiit: '--lg-danger',
+    tennis: '--lg-success',
+    pickleball: '--lg-success',
+};
+
+function setMockStatus(badgeId, statusId, isMock) {
+    document.getElementById(badgeId).style.display = isMock ? '' : 'none';
+    document.getElementById(statusId).textContent = isMock
+        ? 'Synthetic example — replace once real activity data is flowing.'
+        : 'Real data from your curated activity history.';
+}
+
+async function loadOverview() {
+    const response = await fetch('/api/activities_overview_data');
+    const payload = await response.json();
+    if (payload.error) throw new Error(payload.error);
+    setMockStatus('overview-mock-badge', 'overview-status-line', payload.mock);
+
+    document.getElementById('kpi-total-activities').textContent = payload.kpis.total_activities;
+    document.getElementById('kpi-total-distance').textContent = payload.kpis.total_distance_mi.toFixed(0) + ' mi';
+    document.getElementById('kpi-total-hours').textContent = payload.kpis.total_hours.toFixed(0) + ' hr';
+
+    const weeks = [...new Set(payload.weekly_by_type.map(r => r.date))].sort();
+    const typeTraces = payload.activity_types.map((type) => {
+        const byWeek = Object.fromEntries(payload.weekly_by_type.filter(r => r.type === type).map(r => [r.date, r.count]));
+        return {
+            x: weeks,
+            y: weeks.map(w => byWeek[w] || 0),
+            type: 'bar',
+            name: type,
+            marker: { color: token(TYPE_COLORS[type] || '--lg-gold') },
+        };
+    });
+    Plotly.newPlot('weekly-type-chart', typeTraces, baseLayout('Activities per Week', { barmode: 'stack', showlegend: true, legend: { orientation: 'h', y: -0.2 } }), { responsive: true, displaylogo: false });
+
+    const totals = payload.weekly_totals;
+    Plotly.newPlot('weekly-distance-chart', [
+        { x: totals.map(r => r.date), y: totals.map(r => r.total_distance_mi), type: 'bar', marker: { color: token('--lg-gold') } },
+    ], baseLayout('Distance (mi)'), { responsive: true, displaylogo: false });
+
+    Plotly.newPlot('weekly-hours-chart', [
+        { x: totals.map(r => r.date), y: totals.map(r => r.total_hours), type: 'bar', marker: { color: token('--lg-highlight') } },
+    ], baseLayout('Hours'), { responsive: true, displaylogo: false });
+}
+
 document.getElementById('get-suggestion').addEventListener('click', async () => {
     const button = document.getElementById('get-suggestion');
     button.disabled = true;
@@ -49,6 +159,11 @@ document.getElementById('get-suggestion').addEventListener('click', async () => 
     } finally {
         button.disabled = false;
     }
+});
+
+loadOverview().catch((error) => {
+    console.error('Failed to load activities overview', error);
+    document.getElementById('overview-status-line').textContent = 'Error: ' + error.message;
 });
 </script>
 {% endblock %}
