@@ -151,7 +151,7 @@ def test_get_activity_timeseries_parses_real_response_shape() -> None:
     assert row["lat"] == 34.03996204957366
     assert row["lon"] == -118.4442356787622
     # directDoubleCadence (161), not directRunCadence (80) -- see docstring.
-    assert row["cadence_spm"] == 161.0
+    assert row["cadence"] == 161.0
     assert row["heart_rate_bpm"] == 130.0
     assert row["power_w"] == 488.0
     assert row["elevation_ft"] == round(63.20000076293945 / METERS_PER_FOOT, 1)
@@ -165,6 +165,45 @@ def test_get_activity_timeseries_handles_empty_response_gracefully() -> None:
     df = puller.get_activity_timeseries("123")
 
     assert df.empty
+
+
+# Cycling activities use an entirely different metricDescriptors set --
+# directBikeCadence (RPM) and power-meter fields (pedal smoothness, torque
+# effectiveness, power phase), not directDoubleCadence or any running-
+# dynamics field. Confirmed against a live pull (2026-07-31, cycling
+# activity 23026068497).
+REAL_CYCLING_METRIC_DESCRIPTORS = [
+    {"metricsIndex": i, "key": key} for i, key in enumerate([
+        "directSpeed", "sumDuration", "directPotentialStamina", "directLongitude", "directAvailableStamina",
+        "directTimestamp", "sumElapsedDuration", "directLatitude", "directHeartRate", "directPower",
+        "sumDistance", "sumMovingDuration", "directBodyBattery", "directElevation", "directVerticalSpeed",
+        "sumAccumulatedPower", "directFractionalCadence", "directBikeCadence", "directLeftPowerPhaseStart",
+    ])
+]
+REAL_CYCLING_METRIC_POINT = {
+    "metrics": [
+        6.42, 278.0, 80.0, -118.38618010282516, 80.0, 1779843586000.0, 301.0, 34.030726198107004, 168.0,
+        194.0, 1714.469970703125, 274.0, 42.0, 34.0, 0.0, 55950.0, 0.0, 67.0, 0.0,
+    ]
+}
+
+
+def test_get_activity_timeseries_falls_back_to_bike_cadence_for_cycling() -> None:
+    detail_response = {
+        "metricDescriptors": REAL_CYCLING_METRIC_DESCRIPTORS,
+        "activityDetailMetrics": [REAL_CYCLING_METRIC_POINT],
+    }
+    puller = ActivityPuller(StubDetailSession(detail_response))
+
+    df = puller.get_activity_timeseries("23026068497")
+
+    row = df.iloc[0]
+    assert row["cadence"] == 67.0  # directBikeCadence, not directDoubleCadence (absent for cycling)
+    assert row["power_w"] == 194.0
+    assert row["heart_rate_bpm"] == 168.0
+    # Running-dynamics fields aren't present in a cycling response at all.
+    assert pd.isna(row["stride_length"])
+    assert pd.isna(row["ground_contact_time_ms"])
 
 
 def test_activity_type_registry_has_expected_datasets() -> None:

@@ -282,8 +282,8 @@ async function loadDetail(sport, activityId) {
     ], baseLayout('Heart Rate (bpm)', detailXAxis()), { responsive: true, displaylogo: false });
 
     Plotly.newPlot('detail-cadence-chart', [
-        { x, y: points.map(p => p.cadence_spm), type: 'scatter', mode: 'lines', line: { color: token(DETAIL_CHART_COLORS.cadence), width: 1.5 } },
-    ], baseLayout('Cadence (spm)', detailXAxis()), { responsive: true, displaylogo: false });
+        { x, y: points.map(p => p.cadence), type: 'scatter', mode: 'lines', line: { color: token(DETAIL_CHART_COLORS.cadence), width: 1.5 } },
+    ], baseLayout('Cadence (spm running / rpm cycling)', detailXAxis()), { responsive: true, displaylogo: false });
 
     Plotly.newPlot('detail-power-chart', [
         { x, y: points.map(p => p.power_w), type: 'scatter', mode: 'lines', line: { color: token(DETAIL_CHART_COLORS.power), width: 1.5 } },

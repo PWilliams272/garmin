@@ -313,9 +313,9 @@ def _seed_running_timeseries(store, activity_id: str, date: str) -> None:
     ]))
     store.write_activity_detail('running_timeseries', activity_id, pd.DataFrame([
         {'timestamp': f'{date}T08:00:00', 'lat': 40.0, 'lon': -105.0, 'elevation_ft': 100.0,
-         'distance_mi': 0.0, 'speed_mph': 0.0, 'cadence_spm': 90.0, 'heart_rate_bpm': 100.0, 'power_w': 0.0},
+         'distance_mi': 0.0, 'speed_mph': 0.0, 'cadence': 90.0, 'heart_rate_bpm': 100.0, 'power_w': 0.0},
         {'timestamp': f'{date}T08:00:10', 'lat': 40.001, 'lon': -105.001, 'elevation_ft': 101.0,
-         'distance_mi': 0.02, 'speed_mph': 7.0, 'cadence_spm': 170.0, 'heart_rate_bpm': 140.0, 'power_w': 250.0},
+         'distance_mi': 0.02, 'speed_mph': 7.0, 'cadence': 170.0, 'heart_rate_bpm': 140.0, 'power_w': 250.0},
     ]))
 
 

@@ -194,10 +194,22 @@ class ActivityPuller:
 
         Unit notes (verified where noted, else Garmin's raw units passed
         through unconverted since they weren't independently confirmed):
-        - cadence_spm uses `directDoubleCadence`, not `directRunCadence` --
-          the latter is per-leg (observed ~half of directDoubleCadence,
-          e.g. 80 vs. 161), while directDoubleCadence lines up with the
-          full steps/min convention pull_running_summary's
+        - `cadence` uses `directDoubleCadence` (running, steps/min) or
+          `directBikeCadence` (cycling, RPM) -- confirmed these are two
+          entirely different metricDescriptors sets per activity type, not
+          just missing values (a cycling pull returned directBikeCadence,
+          directLeftPowerPhaseStart, directPedalSmoothness, and other
+          power-meter fields with zero running-dynamics fields present at
+          all; a running pull is the reverse). Only one of the two cadence
+          fields is ever populated for a given activity, so this column
+          combines them rather than picking one and leaving cycling blank.
+          Not unit-normalized (steps/min vs. RPM) since the two sports
+          aren't meant to be compared on this axis -- treat the unit as
+          sport-dependent, same as pace vs. speed.
+        - directDoubleCadence itself (running only) is used over
+          directRunCadence, which is per-leg (observed ~half of
+          directDoubleCadence, e.g. 80 vs. 161) and doesn't match the full
+          steps/min convention pull_running_summary's
           averageRunningCadenceInStepsPerMinute already uses.
         - speed_mph converted from directSpeed (confirmed m/s: e.g. 3.55
           m/s observed mid-run maps to a plausible ~7:30/mi pace).
@@ -225,7 +237,9 @@ class ActivityPuller:
         raw = pd.DataFrame(raw_rows)
 
         def _get(col):
-            return raw[col] if col in raw.columns else pd.Series([None] * len(raw))
+            if col in raw.columns:
+                return pd.to_numeric(raw[col], errors="coerce")
+            return pd.Series([None] * len(raw), dtype="float64")
 
         out = pd.DataFrame({
             "timestamp": pd.to_datetime(_get("directTimestamp"), unit="ms", errors="coerce"),
@@ -234,7 +248,7 @@ class ActivityPuller:
             "elevation_ft": (_get("directElevation") / METERS_PER_FOOT).round(1),
             "distance_mi": (_get("sumDistance") / METERS_PER_MILE).round(3),
             "speed_mph": (_get("directSpeed") * 2.236936).round(2),
-            "cadence_spm": _get("directDoubleCadence"),
+            "cadence": _get("directDoubleCadence").fillna(_get("directBikeCadence")),
             "heart_rate_bpm": _get("directHeartRate"),
             "power_w": _get("directPower"),
             "grade_adjusted_speed": _get("directGradeAdjustedSpeed"),

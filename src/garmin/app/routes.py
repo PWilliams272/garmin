@@ -682,7 +682,7 @@ def _mock_activity_detail() -> dict:
         'elevation_ft': None,
         'distance_mi': np.round(distance_mi, 3),
         'speed_mph': np.round(speed, 1),
-        'cadence_spm': np.round(cadence, 0),
+        'cadence': np.round(cadence, 0),
         'heart_rate_bpm': np.round(heart_rate, 0),
         'power_w': np.round(power, 0),
     })
