@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Garmin Dashboard{% endblock %}
-{% block subtitle %}Points are raw readings; the shaded/dotted bands are a GP-fitted trend (68%/95% predictive intervals). Uncertain readings render hollow; excluded outliers are noted, not hidden silently.{% endblock %}
+{% block subtitle %}Points are raw readings; the shaded/dotted line is a fitted trend (68%/95% predictive intervals). Readings flagged as potential outliers render hollow; excluded ones are noted, not hidden silently.{% endblock %}
 {% block head %}
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 {% endblock %}
@@ -114,37 +114,37 @@ const chartState = {
 const chartConfig = {
     heartRate: {
         chartId: 'heart-rate-chart', outlierId: 'heart-rate-outliers',
-        metricKey: 'resting_hr', colorToken: '--lg-gold', yAxisTitle: 'Resting Heart Rate (bpm)',
+        metricKey: 'resting_hr', yAxisTitle: 'Resting Heart Rate (bpm)',
         format: (v) => v === null ? '—' : Math.round(v) + ' bpm',
         betterWhen: 'lower',
     },
     steps: {
         chartId: 'steps-chart', outlierId: 'steps-outliers',
-        metricKey: 'total_steps', colorToken: '--lg-highlight', yAxisTitle: 'Steps',
+        metricKey: 'total_steps', yAxisTitle: 'Steps',
         format: (v) => v === null ? '—' : Math.round(v).toLocaleString(),
         betterWhen: 'higher',
     },
     weight: {
         chartId: 'weight-chart', outlierId: 'weight-outliers',
-        metricKey: 'weight', colorToken: '--lg-success', yAxisTitle: 'Weight (lb)',
+        metricKey: 'weight', yAxisTitle: 'Weight (lb)',
         format: (v) => v === null ? '—' : v.toFixed(1) + ' lb',
         betterWhen: null,
     },
     bodyFat: {
         chartId: 'body-fat-chart', outlierId: 'body-fat-outliers',
-        metricKey: 'body_fat', colorToken: '--lg-warning', yAxisTitle: 'Body Fat (%)',
+        metricKey: 'body_fat', yAxisTitle: 'Body Fat (%)',
         format: (v) => v === null ? '—' : v.toFixed(1) + '%',
         betterWhen: 'lower',
     },
     muscleMass: {
         chartId: 'muscle-mass-chart', outlierId: 'muscle-mass-outliers',
-        metricKey: 'muscle_mass', colorToken: '--lg-info', yAxisTitle: 'Muscle Mass (lb)',
+        metricKey: 'muscle_mass', yAxisTitle: 'Muscle Mass (lb)',
         format: (v) => v === null ? '—' : v.toFixed(1) + ' lb',
         betterWhen: 'higher',
     },
     boneMass: {
         chartId: 'bone-mass-chart', outlierId: 'bone-mass-outliers',
-        metricKey: 'bone_mass', colorToken: '--lg-danger', yAxisTitle: 'Bone Mass (lb)',
+        metricKey: 'bone_mass', yAxisTitle: 'Bone Mass (lb)',
         format: (v) => v === null ? '—' : v.toFixed(2) + ' lb',
         betterWhen: null,
     },
@@ -152,6 +152,23 @@ const chartConfig = {
 
 function setStatus(message) {
     document.getElementById('dashboard-status').textContent = message;
+}
+
+// Fewer visible points (a shorter selected range) means each one should
+// read as bigger/more prominent -- calibrated against the range buttons:
+// 2Y unchanged from the original fixed size, 1Y a touch bigger, 7D much
+// bigger (was barely visible before). `approxDays` is the range-button
+// day count normally; for a custom range (unknown span ahead of time) the
+// caller passes the actual visible point count as a stand-in, since for
+// daily-cadence health metrics that's roughly the same thing.
+function pointSizeForDensity(approxDays) {
+    if (approxDays <= 7) return 9;
+    if (approxDays <= 14) return 8;
+    if (approxDays <= 30) return 7;
+    if (approxDays <= 90) return 6;
+    if (approxDays <= 180) return 5;
+    if (approxDays <= 365) return 4.5;
+    return 4;
 }
 
 function filterByRange(rows, anchorDate, dateKey) {
@@ -294,8 +311,12 @@ function renderAnalyzedChart(config, anchorDate) {
     const visiblePoints = filterByRange(allPoints, anchorDate).filter((p) => p.quality_tier !== 'hard');
     const normalPoints = visiblePoints.filter((p) => p.quality_tier === 'normal');
     const softPoints = visiblePoints.filter((p) => p.quality_tier === 'soft');
-    const color = token(config.colorToken);
-    const stsColor = token('--lg-danger');
+    // Points = secondary, trend = primary -- consistent across every metric
+    // card rather than a different arbitrary hue per metric.
+    const color = token('--lg-highlight');
+    const stsColor = token('--lg-gold');
+    const approxSpan = chartState.rangeDays === 'custom' ? visiblePoints.length : chartState.rangeDays;
+    const pointSize = pointSizeForDensity(approxSpan);
 
     const traces = [];
     if (gpTrend.length) {
@@ -310,14 +331,14 @@ function renderAnalyzedChart(config, anchorDate) {
     }
     traces.push({
         x: normalPoints.map(p => p.date), y: normalPoints.map(p => p[config.metricKey]),
-        type: 'scatter', mode: 'markers', marker: { color, size: 4, opacity: 0.35 }, yaxis: 'y',
+        type: 'scatter', mode: 'markers', marker: { color, size: pointSize, opacity: 0.35 }, yaxis: 'y',
         hovertemplate: '%{x}<br>%{y}<extra></extra>', name: 'Observed',
     });
     traces.push({
         x: softPoints.map(p => p.date), y: softPoints.map(p => p[config.metricKey]),
         type: 'scatter', mode: 'markers',
-        marker: { color, size: 6, opacity: 0.6, symbol: 'circle-open', line: { width: 1.5, color } },
-        yaxis: 'y', hovertemplate: '%{x}<br>%{y} (lower confidence)<extra></extra>', name: 'Uncertain',
+        marker: { color, size: pointSize + 3, opacity: 0.6, symbol: 'circle-open', line: { width: 1.5, color } },
+        yaxis: 'y', hovertemplate: '%{x}<br>%{y} (flagged as potential outlier)<extra></extra>', name: 'Flagged as potential outlier',
     });
     if (stsTrend.length) {
         traces.push({ x: stsTrend.map(t => t.date), y: stsTrend.map(t => t.upper_95), type: 'scatter', mode: 'lines', line: { color: stsColor, width: 1, dash: 'dot' }, hoverinfo: 'skip', showlegend: false });
