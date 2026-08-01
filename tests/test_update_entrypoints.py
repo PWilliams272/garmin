@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import garmin.scripts.lambda_update as lambda_update
 import garmin.scripts.manual_update as manual_update
+import garmin.scripts.manual_backfill_activity_details as manual_backfill_activity_details
 
 
 def test_manual_update_uses_curated_store(monkeypatch) -> None:
@@ -85,3 +86,37 @@ def test_lambda_update_uses_curated_store(monkeypatch) -> None:
     assert captured['curated_store'] is not None
     assert captured['updated'] is True
     assert result == {'status': 'success'}
+
+
+def test_manual_backfill_activity_details_can_target_s3(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class StubSession:
+        pass
+
+    class StubFileManager:
+        def __init__(self, environment=None, **kwargs):
+            captured['environment'] = environment
+
+    class StubCuratedStore:
+        def __init__(self, file_manager):
+            captured['file_manager'] = file_manager
+
+    class StubDataUpdater:
+        def __init__(self, session, db_manager=None, curated_store=None, **kwargs):
+            captured['curated_store'] = curated_store
+
+        def backfill_all_activity_details(self, limit_per_dataset=None):
+            captured['limit_per_dataset'] = limit_per_dataset
+            captured['backfilled'] = True
+
+    monkeypatch.setattr(manual_backfill_activity_details, 'GarminSession', StubSession)
+    monkeypatch.setattr(manual_backfill_activity_details, 'FileManager', StubFileManager)
+    monkeypatch.setattr(manual_backfill_activity_details, 'CuratedDataStore', StubCuratedStore)
+    monkeypatch.setattr(manual_backfill_activity_details, 'DataUpdater', StubDataUpdater)
+
+    manual_backfill_activity_details.main(['--storage-target', 's3', '--limit-per-dataset', '25'])
+
+    assert captured['environment'] == 'aws'
+    assert captured['limit_per_dataset'] == 25
+    assert captured['backfilled'] is True

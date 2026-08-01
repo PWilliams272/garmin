@@ -428,7 +428,12 @@ class DataUpdater:
         """
         cardio = self.activity_puller.pull_cardio_summary
         entries = [
-            {"dataset": "running", "activity_type": "running", "summary_fn": self.activity_puller.pull_running_summary},
+            {
+                "dataset": "running", "activity_type": "running",
+                "summary_fn": self.activity_puller.pull_running_summary,
+                "detail_fn": self.activity_puller.get_activity_detail_timeseries,
+                "detail_dataset": "running_timeseries",
+            },
             {
                 "dataset": "strength", "activity_type": "strength_training",
                 "summary_fn": self.activity_puller.pull_strength_summary,
@@ -442,10 +447,19 @@ class DataUpdater:
             entries.append({
                 "dataset": dataset, "activity_type": dataset,
                 "summary_fn": lambda s, e, t=dataset: cardio(t, s, e),
+                # Every non-strength sport goes through the same FIT-first/
+                # JSON-fallback per-point puller as running (see
+                # get_activity_detail_timeseries) -- it degrades gracefully
+                # (empty df, skipped below) for sports with no GPS/FIT data.
+                "detail_fn": self.activity_puller.get_activity_detail_timeseries,
+                "detail_dataset": f"{dataset}_timeseries",
             })
         return entries
 
-    def _update_activity_curated(self, dataset: str, summary_fn, detail_fn=None, start_date: str = "2015-01-01") -> None:
+    def _update_activity_curated(
+        self, dataset: str, summary_fn, detail_fn=None, detail_dataset: str | None = None,
+        start_date: str = "2015-01-01",
+    ) -> None:
         existing = self.curated_store.load_activity_summary(dataset)
         if not existing.empty and "date" in existing.columns:
             last_date = pd.to_datetime(existing["date"]).dt.date.max()
@@ -460,12 +474,13 @@ class DataUpdater:
         merged = self.curated_store.merge_activity_summary(dataset, summary_df)
 
         if detail_fn is not None:
+            detail_dataset = detail_dataset or dataset
             for activity_id in summary_df["activity_id"]:
                 detail_df = detail_fn(activity_id)
                 if detail_df.empty:
                     continue
                 detail_df["activity_id"] = activity_id
-                self.curated_store.write_activity_detail(dataset, activity_id, detail_df)
+                self.curated_store.write_activity_detail(detail_dataset, activity_id, detail_df)
 
         print(f"Saved {len(merged)} curated {dataset} activities ({len(summary_df)} new/updated).")
 
@@ -473,7 +488,70 @@ class DataUpdater:
         for entry in self._activity_type_registry():
             self._update_activity_curated(
                 entry["dataset"], entry["summary_fn"], entry.get("detail_fn"),
+                entry.get("detail_dataset"),
             )
+
+    def backfill_activity_details(
+        self, dataset: str, detail_fn, detail_dataset: str | None = None, limit: int | None = None,
+    ) -> dict:
+        """Fill in curated/activities/detail/<detail_dataset>/ for activities
+        that already have a summary row but no detail file yet -- covers
+        history pulled before detail_fn was wired into the daily registry
+        (_update_activity_curated only pulls details for *new* activities
+        each run). Resumable: safe to re-run, only touches ids missing a
+        detail file, so a partial run (rate limit, timeout, Ctrl-C) can just
+        be re-invoked. Returns counts for the caller to report/log.
+        """
+        detail_dataset = detail_dataset or dataset
+        summary = self.curated_store.load_activity_summary(dataset)
+        if summary.empty:
+            return {"dataset": dataset, "total": 0, "already_had_detail": 0, "fetched": 0, "empty": 0}
+
+        prefix = f"curated/activities/detail/{detail_dataset}/"
+        existing_files = self.curated_store.file_manager.list_files(prefix)
+        existing_ids = {
+            f.rsplit("activity_id=", 1)[-1].removesuffix(".parquet")
+            for f in existing_files if f.endswith(".parquet")
+        }
+
+        all_ids = summary["activity_id"].astype(str).tolist()
+        missing_ids = [aid for aid in all_ids if aid not in existing_ids]
+        already_had_detail = len(all_ids) - len(missing_ids)
+        if limit is not None:
+            missing_ids = missing_ids[:limit]
+
+        fetched, empty = 0, 0
+        for activity_id in missing_ids:
+            detail_df = detail_fn(activity_id)
+            if detail_df.empty:
+                empty += 1
+                continue
+            detail_df["activity_id"] = activity_id
+            self.curated_store.write_activity_detail(detail_dataset, activity_id, detail_df)
+            fetched += 1
+
+        return {
+            "dataset": dataset, "total": len(all_ids),
+            "already_had_detail": already_had_detail,
+            "fetched": fetched, "empty": empty,
+        }
+
+    def backfill_all_activity_details(self, limit_per_dataset: int | None = None) -> list[dict]:
+        results = []
+        for entry in self._activity_type_registry():
+            detail_fn = entry.get("detail_fn")
+            if detail_fn is None:
+                continue
+            result = self.backfill_activity_details(
+                entry["dataset"], detail_fn, entry.get("detail_dataset"), limit_per_dataset,
+            )
+            results.append(result)
+            print(
+                f"[{result['dataset']}] {result['fetched']} fetched, "
+                f"{result['already_had_detail']} already had detail, "
+                f"{result['empty']} empty of {result['total']} total."
+            )
+        return results
 
     def _resolve_model_class(self, class_or_name: str | type) -> type:
         if isinstance(class_or_name, str):

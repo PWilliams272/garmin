@@ -217,9 +217,14 @@ def test_activity_type_registry_has_expected_datasets() -> None:
 
     assert {"running", "strength", "cycling", "hiking", "lap_swimming"}.issubset(datasets)
     running_entry = next(e for e in updater._activity_type_registry() if e["dataset"] == "running")
-    assert "detail_fn" not in running_entry
+    assert "detail_fn" in running_entry
+    assert running_entry["detail_dataset"] == "running_timeseries"
+    cycling_entry = next(e for e in updater._activity_type_registry() if e["dataset"] == "cycling")
+    assert "detail_fn" in cycling_entry
+    assert cycling_entry["detail_dataset"] == "cycling_timeseries"
     strength_entry = next(e for e in updater._activity_type_registry() if e["dataset"] == "strength")
     assert "detail_fn" in strength_entry
+    assert "detail_dataset" not in strength_entry
 
 
 def test_update_activity_curated_writes_summary_and_detail(tmp_path) -> None:
@@ -243,6 +248,87 @@ def test_update_activity_curated_writes_summary_and_detail(tmp_path) -> None:
     assert detail_calls == ["1"]
     assert len(store.load_activity_summary("cycling")) == 1
     assert len(store.load_activity_detail("cycling", "1")) == 1
+
+
+def test_update_activity_curated_writes_detail_under_separate_dataset(tmp_path) -> None:
+    store = CuratedDataStore(file_manager=FileManager(environment="local", local_dir=str(tmp_path)))
+    updater = DataUpdater(session=object(), db_manager=object(), curated_store=store)
+
+    def summary_fn(start_date, end_date):
+        return pd.DataFrame([{"activity_id": "1", "date": "2024-06-01", "duration_min": 45.0}])
+
+    def detail_fn(activity_id):
+        return pd.DataFrame([{"timestamp": "2024-06-01T08:00:00", "speed_mph": 6.0}])
+
+    updater._update_activity_curated("running", summary_fn, detail_fn, "running_timeseries")
+
+    assert len(store.load_activity_detail("running_timeseries", "1")) == 1
+    assert store.load_activity_detail("running", "1").empty
+
+
+def test_backfill_activity_details_only_fetches_missing_ids(tmp_path) -> None:
+    store = CuratedDataStore(file_manager=FileManager(environment="local", local_dir=str(tmp_path)))
+    store.merge_activity_summary(
+        "running",
+        pd.DataFrame([
+            {"activity_id": "1", "date": "2024-06-01", "duration_min": 45.0},
+            {"activity_id": "2", "date": "2024-06-02", "duration_min": 30.0},
+        ]),
+    )
+    store.write_activity_detail(
+        "running_timeseries", "1", pd.DataFrame([{"timestamp": "2024-06-01T08:00:00", "speed_mph": 6.0}])
+    )
+    updater = DataUpdater(session=object(), db_manager=object(), curated_store=store)
+
+    detail_calls: list[str] = []
+
+    def detail_fn(activity_id):
+        detail_calls.append(activity_id)
+        return pd.DataFrame([{"timestamp": "2024-06-02T08:00:00", "speed_mph": 7.0}])
+
+    result = updater.backfill_activity_details("running", detail_fn, "running_timeseries")
+
+    assert detail_calls == ["2"]
+    assert result == {"dataset": "running", "total": 2, "already_had_detail": 1, "fetched": 1, "empty": 0}
+    assert len(store.load_activity_detail("running_timeseries", "2")) == 1
+
+
+def test_backfill_activity_details_limit_reports_deferred_ids_as_not_yet_had(tmp_path) -> None:
+    store = CuratedDataStore(file_manager=FileManager(environment="local", local_dir=str(tmp_path)))
+    store.merge_activity_summary(
+        "running",
+        pd.DataFrame([
+            {"activity_id": str(i), "date": "2024-06-01", "duration_min": 45.0} for i in range(1, 6)
+        ]),
+    )
+    updater = DataUpdater(session=object(), db_manager=object(), curated_store=store)
+
+    def detail_fn(activity_id):
+        return pd.DataFrame([{"timestamp": "2024-06-01T08:00:00", "speed_mph": 6.0}])
+
+    result = updater.backfill_activity_details("running", detail_fn, "running_timeseries", limit=2)
+
+    # 2 fetched this run, 0 already had detail before the run -- the other 3
+    # are still genuinely missing (deferred to a future run), not "had".
+    assert result == {"dataset": "running", "total": 5, "already_had_detail": 0, "fetched": 2, "empty": 0}
+
+
+def test_backfill_activity_details_is_resumable_noop_when_all_present(tmp_path) -> None:
+    store = CuratedDataStore(file_manager=FileManager(environment="local", local_dir=str(tmp_path)))
+    store.merge_activity_summary(
+        "running", pd.DataFrame([{"activity_id": "1", "date": "2024-06-01", "duration_min": 45.0}])
+    )
+    store.write_activity_detail(
+        "running_timeseries", "1", pd.DataFrame([{"timestamp": "2024-06-01T08:00:00", "speed_mph": 6.0}])
+    )
+    updater = DataUpdater(session=object(), db_manager=object(), curated_store=store)
+
+    def detail_fn(activity_id):
+        raise AssertionError("should not be called -- detail already present")
+
+    result = updater.backfill_activity_details("running", detail_fn, "running_timeseries")
+
+    assert result == {"dataset": "running", "total": 1, "already_had_detail": 1, "fetched": 0, "empty": 0}
 
 
 def test_update_activity_curated_resumes_from_last_date(tmp_path) -> None:
