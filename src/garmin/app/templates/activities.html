@@ -218,6 +218,35 @@ function elapsedMinutes(points) {
     return points.map(p => ((new Date(p.timestamp).getTime() - t0) / 60000).toFixed(2));
 }
 
+// Robust y-axis range: bound the *view* by the 2nd-98th percentile of the
+// actual values (+ padding) rather than trying to null out every point
+// that isn't part of the "real" signal -- a value like a 0W power reading
+// coasting/paused stays in the data (it's real), it just doesn't get to
+// stretch the axis so far that the meaningful variation is compressed.
+function percentileRange(values, padFrac) {
+    const clean = values.filter(v => v !== null && v !== undefined && !Number.isNaN(v)).slice().sort((a, b) => a - b);
+    if (!clean.length) return undefined;
+    const pct = (p) => clean[Math.min(clean.length - 1, Math.max(0, Math.round((p / 100) * (clean.length - 1))))];
+    const lo = pct(2), hi = pct(98);
+    const pad = (hi - lo) * (padFrac ?? 0.12) || Math.abs(hi) * 0.05 || 1;
+    return [lo - pad, hi + pad];
+}
+
+// Grey background bands over stretches the backend flagged as "probably
+// paused the watch" (near-zero speed or missing HR for several consecutive
+// samples) -- shown for context on every chart rather than trying to
+// explain away the dip/gap in the data at each one individually.
+function pauseWindowShapes(pauseWindows, points) {
+    if (!pauseWindows || !pauseWindows.length) return [];
+    const t0 = new Date(points[0].timestamp).getTime();
+    const toElapsedMin = (iso) => (new Date(iso).getTime() - t0) / 60000;
+    return pauseWindows.map((w) => ({
+        type: 'rect', xref: 'x', yref: 'paper',
+        x0: toElapsedMin(w.start), x1: toElapsedMin(w.end), y0: 0, y1: 1,
+        fillcolor: token('--lg-text-2'), opacity: 0.15, line: { width: 0 }, layer: 'below',
+    }));
+}
+
 // min/mile pace from mph. The backend already nulls speed_mph at points
 // where speed is changing too fast to represent a stable pace
 // (_reject_speed_transition_points -- the acceleration/deceleration ramp
@@ -293,29 +322,40 @@ async function loadDetail(sport, activityId) {
 
     const x = elapsedMinutes(points);
     const pace = points.map(p => paceMinPerMile(p.speed_mph));
+    const pauseShapes = pauseWindowShapes(payload.pause_windows, points);
 
     // Scatter, not lines -- these are dense (often 1000s of 1Hz points per
-    // activity, see get_activity_fit_timeseries), and the backend already
-    // rejects sensor/GPS-glitch outliers (_reject_activity_detail_outliers)
-    // before this ever reaches the frontend, so there's no trend to fit,
-    // just the raw (cleaned) readings.
+    // activity, see get_activity_fit_timeseries), and there's no trend to
+    // fit here anyway (single-activity view, not a multi-day trend). The
+    // backend still rejects genuine sensor/GPS glitches
+    // (_reject_activity_detail_outliers), but the y-axis range below (not
+    // point removal) is the main defense against a stray real-but-extreme
+    // value (e.g. 0W while coasting/paused) compressing the rest of the
+    // chart -- see percentileRange.
     const detailMarker = (color) => ({ color: token(color), size: 2.5, opacity: 0.5 });
+    const chartLayout = (yTitle, values) => baseLayout(yTitle, Object.assign(detailXAxis(), {
+        yaxis: { gridcolor: token('--lg-border'), zeroline: false, title: { text: yTitle, font: { size: 11 } }, range: percentileRange(values), autorange: false },
+        shapes: pauseShapes,
+    }));
 
     Plotly.newPlot('detail-pace-chart', [
         { x, y: pace, type: 'scatter', mode: 'markers', marker: detailMarker(DETAIL_CHART_COLORS.pace) },
-    ], baseLayout('Pace (min/mi)', detailXAxis()), { responsive: true, displaylogo: false });
+    ], chartLayout('Pace (min/mi)', pace), { responsive: true, displaylogo: false });
 
+    const hr = points.map(p => p.heart_rate_bpm);
     Plotly.newPlot('detail-hr-chart', [
-        { x, y: points.map(p => p.heart_rate_bpm), type: 'scatter', mode: 'markers', marker: detailMarker(DETAIL_CHART_COLORS.hr) },
-    ], baseLayout('Heart Rate (bpm)', detailXAxis()), { responsive: true, displaylogo: false });
+        { x, y: hr, type: 'scatter', mode: 'markers', marker: detailMarker(DETAIL_CHART_COLORS.hr) },
+    ], chartLayout('Heart Rate (bpm)', hr), { responsive: true, displaylogo: false });
 
+    const cadence = points.map(p => p.cadence);
     Plotly.newPlot('detail-cadence-chart', [
-        { x, y: points.map(p => p.cadence), type: 'scatter', mode: 'markers', marker: detailMarker(DETAIL_CHART_COLORS.cadence) },
-    ], baseLayout('Cadence (spm running / rpm cycling)', detailXAxis()), { responsive: true, displaylogo: false });
+        { x, y: cadence, type: 'scatter', mode: 'markers', marker: detailMarker(DETAIL_CHART_COLORS.cadence) },
+    ], chartLayout('Cadence (spm running / rpm cycling)', cadence), { responsive: true, displaylogo: false });
 
+    const power = points.map(p => p.power_w);
     Plotly.newPlot('detail-power-chart', [
-        { x, y: points.map(p => p.power_w), type: 'scatter', mode: 'markers', marker: detailMarker(DETAIL_CHART_COLORS.power) },
-    ], baseLayout('Power (watts)', detailXAxis()), { responsive: true, displaylogo: false });
+        { x, y: power, type: 'scatter', mode: 'markers', marker: detailMarker(DETAIL_CHART_COLORS.power) },
+    ], chartLayout('Power (watts)', power), { responsive: true, displaylogo: false });
 
     Plotly.newPlot('detail-zones-chart', [
         { x: payload.zones.labels, y: payload.zones.minutes, type: 'bar', marker: { color: token('--lg-info') } },

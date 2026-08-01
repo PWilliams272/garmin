@@ -641,6 +641,47 @@ def _reject_speed_transition_points(detail: pd.DataFrame) -> pd.DataFrame:
     return detail
 
 
+# Consecutive near-zero-speed or missing-HR samples needed before a stretch
+# counts as "probably paused the watch" rather than just noise/a red light.
+MIN_PAUSE_SAMPLES = 4
+
+
+def _detect_pause_windows(detail: pd.DataFrame) -> list[dict]:
+    """Contiguous stretches of near-zero speed or missing heart rate,
+    returned as timestamp windows -- the working theory (yours) is these
+    are where the watch was paused, not sensor noise. Rather than trying
+    to clean these points away, the frontend shades them for context so
+    the dip/gap in the data reads as "watch was paused here", not "the
+    data's wrong here". Computed from the raw (pre-outlier-rejection)
+    columns, since rejection already nulls some of the same points and
+    would otherwise make them indistinguishable from genuine gaps.
+    """
+    if detail.empty or 'timestamp' not in detail.columns:
+        return []
+
+    low_speed = detail['speed_mph'].fillna(0) < 1.0 if 'speed_mph' in detail.columns else pd.Series(False, index=detail.index)
+    missing_hr = detail['heart_rate_bpm'].isna() if 'heart_rate_bpm' in detail.columns else pd.Series(False, index=detail.index)
+    paused = (low_speed | missing_hr).to_numpy()
+
+    windows = []
+    start_idx = None
+    for i, is_paused in enumerate(paused):
+        if is_paused and start_idx is None:
+            start_idx = i
+        elif not is_paused and start_idx is not None:
+            if i - start_idx >= MIN_PAUSE_SAMPLES:
+                windows.append((start_idx, i - 1))
+            start_idx = None
+    if start_idx is not None and len(paused) - start_idx >= MIN_PAUSE_SAMPLES:
+        windows.append((start_idx, len(paused) - 1))
+
+    timestamps = detail['timestamp']
+    return [
+        {'start': timestamps.iloc[s].isoformat(), 'end': timestamps.iloc[e].isoformat()}
+        for s, e in windows
+    ]
+
+
 def _activity_detail_real_payload(sport: str = 'running', activity_id: str | None = None, source: str = 'local') -> dict | None:
     """Real per-point activity detail (map + pace/HR/cadence/power charts),
     read from curated/activities/detail/<sport>_timeseries/ -- written by
@@ -674,6 +715,7 @@ def _activity_detail_real_payload(sport: str = 'running', activity_id: str | Non
         return None
 
     detail = detail.dropna(subset=['timestamp']).sort_values('timestamp').reset_index(drop=True)
+    pause_windows = _detect_pause_windows(detail)
     detail = _reject_activity_detail_outliers(detail)
 
     summary = store.load_activity_summary(sport)
@@ -703,6 +745,7 @@ def _activity_detail_real_payload(sport: str = 'running', activity_id: str | Non
         'activity_id': str(activity_id),
         'points': _timeseries_records(detail),
         'zones': {'labels': HR_ZONE_LABELS, 'minutes': zone_minutes},
+        'pause_windows': pause_windows,
     }
 
 
@@ -752,6 +795,7 @@ def _mock_activity_detail() -> dict:
         },
         'points': _timeseries_records(points),
         'zones': {'labels': HR_ZONE_LABELS, 'minutes': zone_minutes},
+        'pause_windows': [],
     }
 
 

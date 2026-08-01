@@ -446,3 +446,49 @@ def test_reject_speed_transition_points_leaves_steady_speed_alone() -> None:
     cleaned = routes_module._reject_speed_transition_points(detail)
 
     assert cleaned['speed_mph'].notna().all()
+
+
+def test_detect_pause_windows_finds_sustained_low_speed_stretch() -> None:
+    # Running, then stopped (speed ~0) for 5 samples, then running again.
+    speeds = [7.0, 7.1, 6.9, 0.0, 0.0, 0.1, 0.0, 0.0, 7.0, 7.1, 6.9]
+    detail = pd.DataFrame({
+        'timestamp': pd.date_range('2024-01-01 00:00:00', periods=len(speeds), freq='s'),
+        'speed_mph': speeds,
+        'heart_rate_bpm': [140.0] * len(speeds),
+    })
+
+    windows = routes_module._detect_pause_windows(detail)
+
+    assert len(windows) == 1
+    assert windows[0]['start'] == '2024-01-01T00:00:03'
+    assert windows[0]['end'] == '2024-01-01T00:00:07'
+
+
+def test_detect_pause_windows_finds_sustained_missing_hr() -> None:
+    hr = [140.0, 141.0, None, None, None, None, 140.0]
+    detail = pd.DataFrame({
+        'timestamp': pd.date_range('2024-01-01', periods=len(hr), freq='s'),
+        'speed_mph': [7.0] * len(hr),
+        'heart_rate_bpm': hr,
+    })
+
+    windows = routes_module._detect_pause_windows(detail)
+
+    assert len(windows) == 1
+    assert windows[0]['start'] == '2024-01-01T00:00:02'
+    assert windows[0]['end'] == '2024-01-01T00:00:05'
+
+
+def test_detect_pause_windows_ignores_brief_dips() -> None:
+    # A single low-speed sample (e.g. a red light glanced through, or just
+    # noise) shouldn't count as a "pause" -- needs a sustained stretch.
+    speeds = [7.0, 7.1, 0.2, 7.0, 7.1, 6.9]
+    detail = pd.DataFrame({
+        'timestamp': pd.date_range('2024-01-01', periods=len(speeds), freq='s'),
+        'speed_mph': speeds,
+        'heart_rate_bpm': [140.0] * len(speeds),
+    })
+
+    windows = routes_module._detect_pause_windows(detail)
+
+    assert windows == []
