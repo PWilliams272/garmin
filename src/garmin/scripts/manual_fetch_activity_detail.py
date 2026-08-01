@@ -1,11 +1,12 @@
-"""Spike: pull one real activity's full per-point time series (GPS + speed/
-cadence/HR/power/...) for prototyping a detail view (map, pace/HR charts).
+"""Pull one real activity's full per-point time series (GPS + speed/cadence/
+HR/power/...) for the Activities detail view.
 
-Not part of the scheduled pipeline -- ActivityPuller.get_activity_timeseries()
-is verified against a live response (see its docstring) but not yet wired
-into update_all() or any curated storage convention; this script's only job
-is to get one concrete sample on disk. Requires a live Garmin login (local
-dev only), same as manual_update.py.
+Not part of the scheduled pipeline -- ActivityPuller.get_activity_detail_timeseries()
+(FIT file, richer, falling back to the JSON /details endpoint) is verified
+against live responses (see its docstring) but not yet wired into
+update_all() or any curated storage convention; this script is the manual/
+on-demand way to pull detail for a specific activity. Requires a live
+Garmin login (local dev only), same as manual_update.py.
 """
 from dotenv import load_dotenv
 load_dotenv()
@@ -48,10 +49,10 @@ def main(argv: list[str] | None = None) -> None:
         activity_id = str(max(activities, key=lambda a: a["startTimeLocal"])["activityId"])
         print(f"Using most recent {args.activity_type} activity: {activity_id}")
 
-    detail_df = puller.get_activity_timeseries(activity_id)
+    detail_df = puller.get_activity_detail_timeseries(activity_id)
     if detail_df.empty:
         print(f"No detail time series returned for activity {activity_id} -- check "
-              "ActivityPuller.get_activity_timeseries's docstring, the endpoint/response shape may have changed.")
+              "ActivityPuller.get_activity_detail_timeseries's docstring, the endpoint/response shape may have changed.")
         return
 
     print(f"Pulled {len(detail_df)} points.")

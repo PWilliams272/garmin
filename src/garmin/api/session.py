@@ -136,3 +136,13 @@ class GarminSession:
         if not self._connected:
             self.connect()
         return self._client.post(url)
+
+    def download(self, url: str) -> bytes:
+        """Raw bytes for a non-JSON endpoint (e.g. the FIT-file download
+        service). Confirmed live: /download-service/files/activity/{id}
+        is reachable through the same connectapi domain/auth as every
+        other endpoint here, no separate domain or auth path needed.
+        """
+        if not self._connected:
+            self.connect()
+        return self._client.download(url)

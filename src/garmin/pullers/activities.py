@@ -1,11 +1,22 @@
 ## garmin/pullers/activities.py
 
+import io
+import zipfile
+
+import fitparse
 import pandas as pd
 from tqdm.auto import tqdm
 
 METERS_PER_MILE = 1609.344
 METERS_PER_FOOT = 0.3048
 GRAMS_PER_LB = 453.592
+SEMICIRCLE_TO_DEGREES = 180 / (2 ** 31)
+
+# Sports whose FIT `cadence` field is per-leg (confirmed for running by
+# comparing a FIT record against the JSON /details endpoint's
+# directDoubleCadence for the same timestamp: FIT reported exactly half).
+# Cycling's `cadence` is already true RPM, not doubled.
+FIT_CADENCE_DOUBLED_SPORTS = {"running"}
 
 
 class ActivityPuller:
@@ -258,6 +269,111 @@ class ActivityPuller:
             "stride_length": _get("directStrideLength"),
         })
         return out
+
+    def download_activity_fit(self, activity_id: str) -> bytes | None:
+        """Raw FIT file bytes for one activity, unzipped from Garmin's
+        activity-file download endpoint. Confirmed live (2026-07-31):
+        reachable through the same session/auth as every other endpoint
+        here (no separate domain), returns a ZIP containing one .fit file.
+        """
+        content = self.session.download(f"/download-service/files/activity/{activity_id}")
+        if not content:
+            return None
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as zf:
+                fit_names = [n for n in zf.namelist() if n.lower().endswith(".fit")]
+                if not fit_names:
+                    return None
+                return zf.read(fit_names[0])
+        except zipfile.BadZipFile:
+            return None
+
+    def get_activity_fit_timeseries(self, activity_id: str) -> pd.DataFrame:
+        """Full per-point time series parsed from the real FIT file --
+        confirmed live (2026-07-31) to be genuinely higher resolution than
+        get_activity_timeseries's JSON /details endpoint: 1Hz (1560 points
+        for a 1550s ride, 1408 for a 1403s run) vs. that endpoint's ~254
+        points regardless of activity length (a decimated set meant for
+        chart rendering, not raw data).
+
+        Also confirmed the two sources are semantically equivalent, not
+        just different resolutions of different things: cross-referencing
+        FIT records against JSON points at matching timestamps decoded
+        several of FIT's undocumented `unknown_NNN` fields as exact or
+        near-exact matches for JSON's directBodyBattery (-> unknown_143),
+        directAvailableStamina/directPotentialStamina (-> unknown_137/138),
+        and directGradeAdjustedSpeed (-> unknown_140, scaled x1000). The
+        one JSON field that couldn't be confirmed either way is
+        directPerformanceCondition (was None in the sample checked).
+
+        Output columns match get_activity_timeseries's exactly (same
+        names/units) so callers can treat the two interchangeably --
+        see get_activity_detail_timeseries, which prefers this and falls
+        back to the JSON endpoint only if the FIT download/parse fails.
+        """
+        fit_bytes = self.download_activity_fit(activity_id)
+        if not fit_bytes:
+            return pd.DataFrame()
+
+        try:
+            fitfile = fitparse.FitFile(io.BytesIO(fit_bytes))
+            sport = None
+            for msg in fitfile.get_messages("session"):
+                sport = msg.get_value("sport")
+                break
+            records = list(fitfile.get_messages("record"))
+        except fitparse.FitParseError:
+            return pd.DataFrame()
+
+        if not records:
+            return pd.DataFrame()
+
+        raw = pd.DataFrame([
+            {field.name: field.value for field in record if field.value is not None}
+            for record in records
+        ])
+
+        def _get(col):
+            if col in raw.columns:
+                return pd.to_numeric(raw[col], errors="coerce")
+            return pd.Series([None] * len(raw), dtype="float64")
+
+        cadence = _get("cadence") + _get("fractional_cadence").fillna(0)
+        if sport in FIT_CADENCE_DOUBLED_SPORTS:
+            cadence = cadence * 2
+
+        timestamps = pd.to_datetime(raw["timestamp"], errors="coerce") if "timestamp" in raw.columns else pd.Series([pd.NaT] * len(raw))
+
+        out = pd.DataFrame({
+            "timestamp": timestamps,
+            "lat": _get("position_lat") * SEMICIRCLE_TO_DEGREES,
+            "lon": _get("position_long") * SEMICIRCLE_TO_DEGREES,
+            "elevation_ft": (_get("enhanced_altitude") / METERS_PER_FOOT).round(1),
+            "distance_mi": (_get("distance") / METERS_PER_MILE).round(3),
+            "speed_mph": (_get("enhanced_speed") * 2.236936).round(2),
+            "cadence": cadence,
+            "heart_rate_bpm": _get("heart_rate"),
+            "power_w": _get("power"),
+            "grade_adjusted_speed": _get("unknown_140") / 1000.0,
+            "ground_contact_time_ms": _get("stance_time"),
+            "vertical_oscillation": _get("vertical_oscillation"),
+            "vertical_ratio": _get("vertical_ratio"),
+            "stride_length": _get("step_length"),
+        })
+        return out
+
+    def get_activity_detail_timeseries(self, activity_id: str) -> pd.DataFrame:
+        """Preferred per-point detail source for an activity: the real FIT
+        file (1Hz, richer -- see get_activity_fit_timeseries), falling back
+        to the decimated JSON /details endpoint (get_activity_timeseries)
+        only if the FIT download/parse fails. Same output columns either
+        way, so callers don't need to care which source actually served
+        a given activity.
+        """
+        fit_df = self.get_activity_fit_timeseries(activity_id)
+        if not fit_df.empty:
+            return fit_df
+        return self.get_activity_timeseries(activity_id)
 
     def pull_strength_sets(self, start_date: str, end_date: str, show_progress: bool = True) -> pd.DataFrame:
         """Per-set detail rows across all strength_training activities in range, tagged with activity_id/date."""

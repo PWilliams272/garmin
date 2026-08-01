@@ -2,3 +2,4 @@ sqlalchemy>=2.0
 tqdm>=4.67
 python-dotenv>=1.1
 requests>=2.32
+fitparse>=1.2

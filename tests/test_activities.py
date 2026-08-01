@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import io
+import zipfile
+
+import fitparse
 import pandas as pd
+import pytest
 
 from garmin.io.curated_store import CuratedDataStore
 from garmin.io.file_manager import FileManager
@@ -256,3 +261,182 @@ def test_update_activity_curated_resumes_from_last_date(tmp_path) -> None:
     updater._update_activity_curated("cycling", summary_fn)
 
     assert seen_start_dates == ["2024-06-01"]
+
+
+class StubDownloadSession:
+    """Returns fixed bytes for any session.download(...) call."""
+
+    def __init__(self, content: bytes) -> None:
+        self.content = content
+
+    def download(self, url: str) -> bytes:
+        return self.content
+
+
+def _zip_with_fit(fit_bytes: bytes, filename: str = "123_ACTIVITY.fit") -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(filename, fit_bytes)
+    return buf.getvalue()
+
+
+def test_download_activity_fit_extracts_fit_from_zip() -> None:
+    zip_bytes = _zip_with_fit(b"fake-fit-content")
+    puller = ActivityPuller(StubDownloadSession(zip_bytes))
+
+    result = puller.download_activity_fit("123")
+
+    assert result == b"fake-fit-content"
+
+
+def test_download_activity_fit_returns_none_for_zip_without_fit_file() -> None:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("readme.txt", b"no fit here")
+    puller = ActivityPuller(StubDownloadSession(buf.getvalue()))
+
+    assert puller.download_activity_fit("123") is None
+
+
+def test_download_activity_fit_returns_none_for_bad_zip() -> None:
+    puller = ActivityPuller(StubDownloadSession(b"not a zip at all"))
+
+    assert puller.download_activity_fit("123") is None
+
+
+def test_download_activity_fit_returns_none_for_empty_response() -> None:
+    puller = ActivityPuller(StubDownloadSession(b""))
+
+    assert puller.download_activity_fit("123") is None
+
+
+class _FakeFitField:
+    def __init__(self, name, value):
+        self.name = name
+        self.value = value
+
+
+class _FakeFitRecord:
+    def __init__(self, fields: dict):
+        self._fields = fields
+
+    def __iter__(self):
+        for k, v in self._fields.items():
+            yield _FakeFitField(k, v)
+
+    def get_value(self, name):
+        return self._fields.get(name)
+
+
+class _FakeFitFile:
+    """Mimics fitparse.FitFile's public interface (get_messages) without
+    needing a real binary FIT fixture -- lets us test our own field
+    extraction/conversion logic using real values captured from a live
+    pull (see get_activity_fit_timeseries's docstring) without checking a
+    ~100KB+ binary file into the repo.
+    """
+
+    def __init__(self, sport: str, records: list[dict]) -> None:
+        self._sport = sport
+        self._records = [_FakeFitRecord(r) for r in records]
+
+    def get_messages(self, kind: str):
+        if kind == "session":
+            return [_FakeFitRecord({"sport": self._sport})]
+        if kind == "record":
+            return self._records
+        return []
+
+
+# Real values from a live pull (2026-07-31, running activity 23528115932,
+# the record matched against the JSON /details point used elsewhere in this
+# file) -- FIT's cadence (80 + 0.5 fractional) is per-leg, confirmed by
+# comparing against that JSON point's directDoubleCadence (161): FIT
+# reports exactly half.
+REAL_FIT_RUNNING_RECORD = {
+    "timestamp": pd.Timestamp("2026-07-08 19:59:49"),
+    "position_lat": 406112566, "position_long": -1413094774,
+    "enhanced_altitude": 63.2, "distance": 1973.59, "enhanced_speed": 3.546,
+    "cadence": 80, "fractional_cadence": 0.5,
+    "heart_rate": 130, "power": 488,
+    "unknown_140": 3683,
+    "stance_time": 272.0, "vertical_oscillation": 101.6, "vertical_ratio": 7.64, "step_length": 1329.0,
+}
+
+# Real values from a live pull (2026-07-31, cycling activity 23026068497) --
+# cycling's cadence field is already true RPM, not per-leg, so it should
+# NOT be doubled the way running's is.
+REAL_FIT_CYCLING_RECORD = {
+    "timestamp": pd.Timestamp("2026-05-27 00:55:35"),
+    "position_lat": 406028864, "position_long": -1412243258,
+    "enhanced_altitude": 26.0, "distance": 218.7, "enhanced_speed": 2.351,
+    "cadence": 67, "fractional_cadence": 0.0,
+    "heart_rate": 100, "power": 0,
+}
+
+
+def test_get_activity_fit_timeseries_doubles_cadence_for_running(monkeypatch) -> None:
+    puller = ActivityPuller(object())
+    monkeypatch.setattr(puller, "download_activity_fit", lambda activity_id: b"fake-fit-bytes")
+    monkeypatch.setattr(
+        fitparse, "FitFile",
+        lambda source: _FakeFitFile("running", [REAL_FIT_RUNNING_RECORD]),
+    )
+
+    df = puller.get_activity_fit_timeseries("23528115932")
+
+    row = df.iloc[0]
+    assert row["cadence"] == 161.0  # (80 + 0.5) * 2, matches JSON's directDoubleCadence
+    assert row["heart_rate_bpm"] == 130.0
+    assert row["power_w"] == 488.0
+    assert row["grade_adjusted_speed"] == 3.683  # unknown_140 / 1000
+    assert row["lat"] == pytest.approx(34.03996204957366, abs=1e-6)
+    assert row["lon"] == pytest.approx(-118.4442356787622, abs=1e-6)
+    assert row["elevation_ft"] == round(63.2 / METERS_PER_FOOT, 1)
+    assert row["stride_length"] == 1329.0
+
+
+def test_get_activity_fit_timeseries_does_not_double_cadence_for_cycling(monkeypatch) -> None:
+    puller = ActivityPuller(object())
+    monkeypatch.setattr(puller, "download_activity_fit", lambda activity_id: b"fake-fit-bytes")
+    monkeypatch.setattr(
+        fitparse, "FitFile",
+        lambda source: _FakeFitFile("cycling", [REAL_FIT_CYCLING_RECORD]),
+    )
+
+    df = puller.get_activity_fit_timeseries("23026068497")
+
+    row = df.iloc[0]
+    assert row["cadence"] == 67.0  # not doubled
+    assert row["power_w"] == 0.0
+    assert pd.isna(row["stride_length"])  # running-dynamics fields absent for cycling
+
+
+def test_get_activity_fit_timeseries_returns_empty_when_no_fit_file(monkeypatch) -> None:
+    puller = ActivityPuller(object())
+    monkeypatch.setattr(puller, "download_activity_fit", lambda activity_id: None)
+
+    assert puller.get_activity_fit_timeseries("123").empty
+
+
+def test_get_activity_detail_timeseries_prefers_fit_over_json(monkeypatch) -> None:
+    puller = ActivityPuller(object())
+    fit_df = pd.DataFrame([{"lat": 1.0}])
+    json_df = pd.DataFrame([{"lat": 2.0}])
+    monkeypatch.setattr(puller, "get_activity_fit_timeseries", lambda activity_id: fit_df)
+    monkeypatch.setattr(puller, "get_activity_timeseries", lambda activity_id: json_df)
+
+    result = puller.get_activity_detail_timeseries("123")
+
+    assert result is fit_df
+
+
+def test_get_activity_detail_timeseries_falls_back_to_json_when_fit_empty(monkeypatch) -> None:
+    puller = ActivityPuller(object())
+    json_df = pd.DataFrame([{"lat": 2.0}])
+    monkeypatch.setattr(puller, "get_activity_fit_timeseries", lambda activity_id: pd.DataFrame())
+    monkeypatch.setattr(puller, "get_activity_timeseries", lambda activity_id: json_df)
+
+    result = puller.get_activity_detail_timeseries("123")
+
+    assert result is json_df

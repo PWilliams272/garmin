@@ -103,3 +103,10 @@ class GarminConnectClient:
 
     def post(self, path: str, **kwargs: Any) -> dict[str, Any] | list[Any] | None:
         return self.connectapi(path, method="POST", **kwargs)
+
+    def download(self, path: str, **kwargs: Any) -> bytes:
+        """Raw response body for a non-JSON endpoint (e.g. FIT/GPX/TCX
+        activity file downloads), bypassing connectapi()'s response.json().
+        """
+        response = self.request("GET", path, **kwargs)
+        return response.content
