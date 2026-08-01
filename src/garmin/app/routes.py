@@ -16,6 +16,15 @@ import pandas as pd
 import os
 import random as _random
 
+# Which curated store ('local' or 's3') API routes read from when the
+# request doesn't specify ?source= explicitly. The standalone deployed
+# viewer (no local curated/ directory on that host) sets
+# GARMIN_VIEWER_SOURCE=s3 via its systemd unit; local dev keeps the
+# 'local' default.
+DEFAULT_SOURCE = os.environ.get('GARMIN_VIEWER_SOURCE', 'local')
+if DEFAULT_SOURCE not in {'local', 's3'}:
+    DEFAULT_SOURCE = 'local'
+
 RUNNING_ANALYZED_METRICS = ['cadence_spm', 'pace_min_per_mile', 'distance_mi']
 
 MOCK_MA_BANDWIDTH_DAYS = 21
@@ -839,9 +848,9 @@ def metrics_dashboard():
 @bp.route('/curated_metrics_dashboard')
 def curated_metrics_dashboard():
     refresh = request.args.get('refresh', '0') == '1'
-    source = request.args.get('source', 'local')
+    source = request.args.get('source', DEFAULT_SOURCE)
     if source not in {'local', 's3'}:
-        source = 'local'
+        source = DEFAULT_SOURCE
 
     dashboard_dir = os.path.join(fm_local.local_dir, curated_dashboard_relative_dir(source))
     os.makedirs(dashboard_dir, exist_ok=True)
@@ -867,9 +876,9 @@ def curated_metrics_dashboard():
 
 @bp.route('/quick_dashboard')
 def quick_dashboard():
-    source = request.args.get('source', 'local')
+    source = request.args.get('source', DEFAULT_SOURCE)
     if source not in {'local', 's3'}:
-        source = 'local'
+        source = DEFAULT_SOURCE
     return render_template('quick_dashboard.html', source=source, active_section='health')
 
 
@@ -877,9 +886,9 @@ def quick_dashboard():
 def quick_dashboard_data():
     import traceback
     
-    source = request.args.get('source', 'local')
+    source = request.args.get('source', DEFAULT_SOURCE)
     if source not in {'local', 's3'}:
-        source = 'local'
+        source = DEFAULT_SOURCE
 
     try:
         payload = _cached_or_live(f'quick_dashboard_{source}', source, lambda: _health_analyzed_payload(source=source))
@@ -910,9 +919,9 @@ def api_fitness_data():
     import traceback
 
     sport = request.args.get('sport', 'running')
-    source = request.args.get('source', 'local')
+    source = request.args.get('source', DEFAULT_SOURCE)
     if source not in {'local', 's3'}:
-        source = 'local'
+        source = DEFAULT_SOURCE
 
     try:
         is_mock = False
@@ -945,9 +954,9 @@ def activities():
 def api_activities_overview_data():
     import traceback
 
-    source = request.args.get('source', 'local')
+    source = request.args.get('source', DEFAULT_SOURCE)
     if source not in {'local', 's3'}:
-        source = 'local'
+        source = DEFAULT_SOURCE
 
     try:
         is_mock = False
@@ -967,9 +976,9 @@ def api_activities_overview_data():
 def api_activities_list_data():
     import traceback
 
-    source = request.args.get('source', 'local')
+    source = request.args.get('source', DEFAULT_SOURCE)
     if source not in {'local', 's3'}:
-        source = 'local'
+        source = DEFAULT_SOURCE
 
     try:
         is_mock = False
@@ -991,9 +1000,9 @@ def api_activity_detail_data():
 
     sport = request.args.get('sport', 'running')
     activity_id = request.args.get('activity_id')
-    source = request.args.get('source', 'local')
+    source = request.args.get('source', DEFAULT_SOURCE)
     if source not in {'local', 's3'}:
-        source = 'local'
+        source = DEFAULT_SOURCE
 
     try:
         is_mock = False
@@ -1033,9 +1042,9 @@ def data_status():
 def api_data_status_data():
     import traceback
 
-    source = request.args.get('source', 'local')
+    source = request.args.get('source', DEFAULT_SOURCE)
     if source not in {'local', 's3'}:
-        source = 'local'
+        source = DEFAULT_SOURCE
 
     try:
         payload = _cached_or_live(f'data_status_{source}', source, lambda: _data_status_payload(source=source))

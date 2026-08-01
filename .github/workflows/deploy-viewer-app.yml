@@ -1,0 +1,63 @@
+name: Deploy Viewer App to EC2
+
+# Pushes code to the standalone garmin.peterwilliams.dev viewer app, which
+# reads only curated/ + viewer_cache/ from S3 -- no Garmin session, no live
+# compute. The host already runs garmin-viewer.service under systemd, code
+# at /home/ubuntu/garmin_viewer, venv at /home/ubuntu/garmin_viewer/.venv
+# (bootstrapped by hand). This workflow only automates the "push new code"
+# step: rsync, pip install -e ., systemctl restart.
+#
+# Mirrors kaya's and aws_monitor's deploy-viewer-app.yml exactly (same
+# easingthemes/ssh-deploy pattern, same host) for consistency across the
+# three viewer apps on this box.
+#
+# Replaces the old deploy-ec2.yml, which rsynced this repo to
+# /home/ubuntu/garmin -- a directory nothing actually serves (the /garmin
+# route on the main site is served by aws_flask_site's own submodule
+# checkout, deployed by that repo's own CI, not this one). That workflow
+# and its EC2_* secrets are stale as of this viewer-app deploy landing.
+on:
+  push:
+    branches:
+      - prod
+  workflow_dispatch:
+
+concurrency:
+  group: garmin-viewer-app-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy viewer app
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate deploy target
+        run: |
+          if [ -z "${{ secrets.GARMIN_VIEWER_HOST }}" ]; then
+            echo "GARMIN_VIEWER_HOST secret is not set."
+            exit 1
+          fi
+          # No Elastic IP on this host -- this exact gap has broken
+          # aws_flask_site's and kaya's deploys before after a resize.
+          # Update GARMIN_VIEWER_HOST alongside any future resize.
+
+      - name: Rsync code and restart the service
+        uses: easingthemes/ssh-deploy@main
+        with:
+          SSH_PRIVATE_KEY: ${{ secrets.GARMIN_VIEWER_DEPLOY_KEY }}
+          REMOTE_HOST: ${{ secrets.GARMIN_VIEWER_HOST }}
+          REMOTE_USER: ubuntu
+          # No trailing slash on src -- must land as a literal src/
+          # subdirectory, since pyproject.toml's `where = ["src"]` depends
+          # on that layout.
+          SOURCE: "src pyproject.toml README.md"
+          TARGET: "/home/ubuntu/garmin_viewer/"
+          SCRIPT_AFTER: |
+            /home/ubuntu/garmin_viewer/.venv/bin/pip install -e /home/ubuntu/garmin_viewer
+            sudo systemctl restart garmin-viewer.service
