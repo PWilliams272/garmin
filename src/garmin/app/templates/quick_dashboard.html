@@ -311,9 +311,11 @@ function renderAnalyzedChart(config, anchorDate) {
     const visiblePoints = filterByRange(allPoints, anchorDate).filter((p) => p.quality_tier !== 'hard');
     const normalPoints = visiblePoints.filter((p) => p.quality_tier === 'normal');
     const softPoints = visiblePoints.filter((p) => p.quality_tier === 'soft');
-    // Points = secondary, trend = primary -- consistent across every metric
-    // card rather than a different arbitrary hue per metric.
-    const color = token('--lg-highlight');
+    // Points = graphite/neutral (no --lg-graphite token exists in tokens.css,
+    // --lg-text-2 is the closest match -- a muted slate-grey already used
+    // throughout the app), trend = primary -- consistent across every
+    // metric card rather than a different arbitrary hue per metric.
+    const color = token('--lg-text-2');
     const stsColor = token('--lg-gold');
     const approxSpan = chartState.rangeDays === 'custom' ? visiblePoints.length : chartState.rangeDays;
     const pointSize = pointSizeForDensity(approxSpan);
@@ -383,12 +385,12 @@ function renderAnalyzedChart(config, anchorDate) {
 
     traces.push({
         x: residualPoints.map(r => r.date), y: residualPoints.map(r => r.residual),
-        type: 'scatter', mode: 'markers', marker: { color: stsColor, size: 4, opacity: 0.45 },
+        type: 'scatter', mode: 'markers', marker: { color, size: pointSize, opacity: 0.45 },
         xaxis: 'x9', yaxis: 'y9', hovertemplate: '%{x}<br>%{y:.2f}<extra></extra>', showlegend: false,
     });
     traces.push({
         y: residualPoints.map(r => r.residual),
-        type: 'histogram', orientation: 'h', marker: { color: stsColor, opacity: 0.5 },
+        type: 'histogram', orientation: 'h', marker: { color, opacity: 0.5 },
         xaxis: 'x10', yaxis: 'y11', showlegend: false, hoverinfo: 'skip',
     });
 
