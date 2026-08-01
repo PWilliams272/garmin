@@ -205,6 +205,8 @@ def _timeseries_records(df: pd.DataFrame) -> list[dict[str, object]]:
         for key, value in row.items():
             if key == 'date' and pd.notnull(value):
                 cleaned[key] = pd.Timestamp(value).date().isoformat()
+            elif key == 'timestamp' and pd.notnull(value):
+                cleaned[key] = pd.Timestamp(value).isoformat()
             elif pd.isna(value):
                 cleaned[key] = None
             elif hasattr(value, 'item'):
@@ -476,6 +478,7 @@ def _activities_real_payload(source: str = 'local') -> dict | None:
             continue
         frame = summary[['date']].copy()
         frame['type'] = dataset
+        frame['activity_id'] = summary.get('activity_id')
         frame['duration_min'] = summary.get('duration_min')
         frame['distance_mi'] = summary.get('distance_mi') if 'distance_mi' in summary.columns else None
         frames.append(frame)
@@ -524,8 +527,81 @@ def _activities_overview_from_df(df: pd.DataFrame) -> dict:
     }
 
 
+HR_ZONE_LABELS = ['Z1 Recovery', 'Z2 Endurance', 'Z3 Tempo', 'Z4 Threshold', 'Z5 VO2max']
+HR_ZONE_BOUNDS = [0, 114, 133, 152, 171, 999]
+
+
+def _activity_detail_real_payload(sport: str = 'running', activity_id: str | None = None, source: str = 'local') -> dict | None:
+    """Real per-point activity detail (map + pace/HR/cadence/power charts),
+    read from curated/activities/detail/<sport>_timeseries/ -- written by
+    manual_fetch_activity_detail.py, an exploratory spike script, not yet
+    part of the scheduled pipeline. Expect this to usually be empty/cover
+    only whichever single activity that script has been pointed at.
+
+    If activity_id isn't given, picks the most recent activity (by the
+    sport's summary date) that actually has a timeseries file, since not
+    every activity has one yet.
+    """
+    store = curated_s3 if source == 's3' else curated_local
+    dataset = f'{sport}_timeseries'
+
+    if activity_id is None:
+        prefix = f'curated/activities/detail/{dataset}/'
+        files = [f for f in store.file_manager.list_files(prefix) if f.endswith('.parquet')]
+        if not files:
+            return None
+        ids = [f.rsplit('activity_id=', 1)[-1].removesuffix('.parquet') for f in files]
+        summary_all = store.load_activity_summary(sport)
+        if not summary_all.empty:
+            candidates = summary_all[summary_all['activity_id'].astype(str).isin(ids)]
+            if not candidates.empty:
+                activity_id = str(candidates.sort_values('date').iloc[-1]['activity_id'])
+        if activity_id is None:
+            activity_id = ids[0]
+
+    detail = store.load_activity_detail(dataset, str(activity_id))
+    if detail.empty:
+        return None
+
+    detail = detail.dropna(subset=['timestamp']).sort_values('timestamp').reset_index(drop=True)
+
+    summary = store.load_activity_summary(sport)
+    activity_meta = {'type': sport, 'name': None, 'date': None, 'duration_min': None, 'distance_mi': None}
+    meta_row = summary[summary['activity_id'].astype(str) == str(activity_id)] if not summary.empty else summary
+    if not meta_row.empty:
+        r = meta_row.iloc[0]
+        activity_meta.update({
+            'name': r.get('name'),
+            'date': pd.Timestamp(r['date']).date().isoformat() if pd.notnull(r.get('date')) else None,
+            'duration_min': float(r['duration_min']) if pd.notnull(r.get('duration_min')) else None,
+            'distance_mi': float(r['distance_mi']) if pd.notnull(r.get('distance_mi')) else None,
+        })
+
+    # Per-sample elapsed seconds -- Garmin's sampling interval isn't fixed --
+    # clipped so a pause/gap in recording doesn't dump several minutes into
+    # whichever HR zone the heart rate happened to be in right before/after it.
+    delta_s = detail['timestamp'].diff().dt.total_seconds().fillna(0).clip(upper=30)
+    hr = detail['heart_rate_bpm']
+    zone_minutes = [
+        round(float(delta_s[(hr >= HR_ZONE_BOUNDS[i]) & (hr < HR_ZONE_BOUNDS[i + 1])].sum() / 60), 1)
+        for i in range(len(HR_ZONE_LABELS))
+    ]
+
+    return {
+        'activity': activity_meta,
+        'activity_id': str(activity_id),
+        'points': _timeseries_records(detail),
+        'zones': {'labels': HR_ZONE_LABELS, 'minutes': zone_minutes},
+    }
+
+
 def _mock_activity_detail() -> dict:
-    """A single synthetic cycling activity, for the 'precision dive' drill-in view."""
+    """A single synthetic cycling activity, for the 'precision dive' drill-in view.
+
+    Shaped identically to _activity_detail_real_payload's `points` records
+    (lat/lon are just always null here) so the frontend has one renderer
+    for both.
+    """
     rng = np.random.default_rng(123)
     duration_s = 60 * 62
     t = np.arange(0, duration_s, 5)
@@ -535,13 +611,25 @@ def _mock_activity_detail() -> dict:
     power = np.clip(150 + 60 * np.sin(t / 700 + 0.5) + rng.normal(0, 15, n), 0, 420)
     cadence = np.clip(82 + 8 * np.sin(t / 800) + rng.normal(0, 4, n), 0, 110)
     heart_rate = np.clip(130 + 25 * np.sin(t / 850 + 1.0) + rng.normal(0, 4, n), 95, 178)
+    distance_mi = np.cumsum(speed * 5 / 3600)
 
-    zone_labels = ['Z1 Recovery', 'Z2 Endurance', 'Z3 Tempo', 'Z4 Threshold', 'Z5 VO2max']
-    zone_bounds = [0, 114, 133, 152, 171, 999]
     zone_minutes = [
-        round(float(np.sum((heart_rate >= zone_bounds[i]) & (heart_rate < zone_bounds[i + 1])) * 5 / 60), 1)
-        for i in range(len(zone_labels))
+        round(float(np.sum((heart_rate >= HR_ZONE_BOUNDS[i]) & (heart_rate < HR_ZONE_BOUNDS[i + 1])) * 5 / 60), 1)
+        for i in range(len(HR_ZONE_LABELS))
     ]
+
+    base_time = pd.Timestamp.today().normalize() + pd.Timedelta(hours=7)
+    points = pd.DataFrame({
+        'timestamp': [base_time + pd.Timedelta(seconds=int(s)) for s in t],
+        'lat': None,
+        'lon': None,
+        'elevation_ft': None,
+        'distance_mi': np.round(distance_mi, 3),
+        'speed_mph': np.round(speed, 1),
+        'cadence_spm': np.round(cadence, 0),
+        'heart_rate_bpm': np.round(heart_rate, 0),
+        'power_w': np.round(power, 0),
+    })
 
     return {
         'activity': {
@@ -549,14 +637,10 @@ def _mock_activity_detail() -> dict:
             'name': 'Example Ride (sample data)',
             'date': pd.Timestamp.today().date().isoformat(),
             'duration_min': round(duration_s / 60, 1),
-            'distance_mi': round(float(np.trapz(speed, dx=5) / 3600), 1),
+            'distance_mi': round(float(distance_mi[-1]), 1),
         },
-        'time_s': t.tolist(),
-        'speed_mph': np.round(speed, 1).tolist(),
-        'power_w': np.round(power, 0).tolist(),
-        'cadence_rpm': np.round(cadence, 0).tolist(),
-        'heart_rate_bpm': np.round(heart_rate, 0).tolist(),
-        'zones': {'labels': zone_labels, 'minutes': zone_minutes},
+        'points': _timeseries_records(points),
+        'zones': {'labels': HR_ZONE_LABELS, 'minutes': zone_minutes},
     }
 
 
@@ -728,9 +812,19 @@ def api_activities_overview_data():
 def api_activity_detail_data():
     import traceback
 
+    sport = request.args.get('sport', 'running')
+    activity_id = request.args.get('activity_id')
+    source = request.args.get('source', 'local')
+    if source not in {'local', 's3'}:
+        source = 'local'
+
     try:
-        payload = _mock_activity_detail()
-        payload['mock'] = True
+        is_mock = False
+        payload = _activity_detail_real_payload(sport=sport, activity_id=activity_id, source=source)
+        if payload is None:
+            payload = _mock_activity_detail()
+            is_mock = True
+        payload['mock'] = is_mock
         return jsonify(payload)
     except Exception as e:
         print(f"Error loading activity detail data: {e}")

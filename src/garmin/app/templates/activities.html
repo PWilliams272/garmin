@@ -57,7 +57,7 @@
             </tbody>
         </table>
     </div>
-    <div class="status-line" style="margin-top: 10px;">Click a row once real per-activity drill-in is wired up — for now, the sample dive below always shows the same example ride.</div>
+    <div class="status-line" style="margin-top: 10px;">Click a row to load its detail — only activities pulled via manual_fetch_activity_detail.py have real per-point data so far; other rows fall back to the sample dive below.</div>
 </section>
 
 <section class="card chart-card">
@@ -65,21 +65,30 @@
         <span id="detail-activity-name">Sample Activity Detail</span>
         <span class="status-line" id="detail-activity-meta"></span>
     </div>
+    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+        <span class="mock-badge" id="detail-mock-badge" style="display: none;">Mock data</span>
+        <span class="status-line" id="detail-status-line">Loading…</span>
+    </div>
 
-    <div class="map-placeholder">Route map (GPS data not yet available — will render here once activity data is flowing)</div>
+    <div class="chart-host" id="detail-map" style="min-height: 320px;"></div>
+    <div class="status-line" id="detail-map-note" style="margin-top: 6px;"></div>
 
     <section class="chart-grid" style="margin-top: 16px;">
         <div class="card chart-card">
-            <div class="section-heading">Speed</div>
-            <div class="chart-host" id="detail-speed-chart"></div>
+            <div class="section-heading">Pace</div>
+            <div class="chart-host" id="detail-pace-chart"></div>
         </div>
         <div class="card chart-card">
-            <div class="section-heading">Power</div>
-            <div class="chart-host" id="detail-power-chart"></div>
+            <div class="section-heading">Heart Rate</div>
+            <div class="chart-host" id="detail-hr-chart"></div>
         </div>
         <div class="card chart-card">
             <div class="section-heading">Cadence</div>
             <div class="chart-host" id="detail-cadence-chart"></div>
+        </div>
+        <div class="card chart-card">
+            <div class="section-heading">Power</div>
+            <div class="chart-host" id="detail-power-chart"></div>
         </div>
         <div class="card chart-card">
             <div class="section-heading">Time in Heart Rate Zone</div>
@@ -156,34 +165,102 @@ async function loadOverview() {
     tbody.innerHTML = '';
     payload.recent_activities.forEach((activity) => {
         const row = document.createElement('tr');
+        row.style.cursor = 'pointer';
         const distance = activity.distance_mi === null ? '—' : activity.distance_mi.toFixed(1) + ' mi';
         row.innerHTML = `<td>${activity.date}</td><td>${activity.type}</td><td class="num">${activity.duration_min.toFixed(0)} min</td><td class="num">${distance}</td>`;
+        row.addEventListener('click', () => {
+            loadDetail(activity.type, activity.activity_id || null).catch((error) => console.error('Failed to load activity detail', error));
+        });
         tbody.appendChild(row);
     });
 }
 
-async function loadDetail() {
-    const response = await fetch('/api/activity_detail_data');
+const DETAIL_CHART_COLORS = {
+    pace: '--lg-gold', hr: '--lg-danger', cadence: '--lg-success', power: '--lg-highlight',
+};
+
+function detailXAxis() {
+    return { xaxis: { gridcolor: token('--lg-border'), zeroline: false, title: { text: 'Elapsed Time (min)', font: { size: 11 } } } };
+}
+
+function elapsedMinutes(points) {
+    const t0 = new Date(points[0].timestamp).getTime();
+    return points.map(p => ((new Date(p.timestamp).getTime() - t0) / 60000).toFixed(2));
+}
+
+// min/mile pace from mph; null (gap in the line) below walking speed so
+// stopped/paused stretches don't spike the chart toward infinity.
+function paceMinPerMile(speedMph) {
+    return speedMph && speedMph > 1 ? 60 / speedMph : null;
+}
+
+function renderDetailMap(points) {
+    const geoPoints = points.filter(p => p.lat !== null && p.lon !== null && p.lat !== undefined && p.lon !== undefined);
+    const mapNote = document.getElementById('detail-map-note');
+    if (!geoPoints.length) {
+        Plotly.purge('detail-map');
+        document.getElementById('detail-map').innerHTML = '';
+        mapNote.textContent = 'No GPS track for this activity.';
+        return;
+    }
+    mapNote.textContent = '';
+    const trace = {
+        type: 'scattermapbox',
+        mode: 'lines+markers',
+        lat: geoPoints.map(p => p.lat),
+        lon: geoPoints.map(p => p.lon),
+        line: { color: token('--lg-gold'), width: 3 },
+        marker: { size: 3, color: token('--lg-gold') },
+        hoverinfo: 'skip',
+    };
+    const lats = geoPoints.map(p => p.lat);
+    const lons = geoPoints.map(p => p.lon);
+    const layout = {
+        margin: { l: 0, r: 0, t: 0, b: 0 },
+        mapbox: {
+            style: 'open-street-map',
+            center: { lat: (Math.min(...lats) + Math.max(...lats)) / 2, lon: (Math.min(...lons) + Math.max(...lons)) / 2 },
+            zoom: 13,
+        },
+        showlegend: false,
+    };
+    Plotly.newPlot('detail-map', [trace], layout, { responsive: true, displaylogo: false });
+}
+
+async function loadDetail(sport, activityId) {
+    sport = sport || 'running';
+    let url = '/api/activity_detail_data?sport=' + encodeURIComponent(sport);
+    if (activityId) url += '&activity_id=' + encodeURIComponent(activityId);
+    const response = await fetch(url);
     const payload = await response.json();
     if (payload.error) throw new Error(payload.error);
+    setMockStatus('detail-mock-badge', 'detail-status-line', payload.mock);
 
-    document.getElementById('detail-activity-name').textContent = payload.activity.name;
+    document.getElementById('detail-activity-name').textContent = payload.activity.name || 'Activity';
     document.getElementById('detail-activity-meta').textContent =
-        payload.activity.date + ' — ' + payload.activity.duration_min.toFixed(0) + ' min, ' + payload.activity.distance_mi.toFixed(1) + ' mi';
+        (payload.activity.date || '') + ' — ' + (payload.activity.duration_min ?? 0).toFixed(0) + ' min, ' + (payload.activity.distance_mi ?? 0).toFixed(1) + ' mi';
 
-    const x = payload.time_s.map(s => (s / 60).toFixed(1));
+    const points = payload.points;
+    renderDetailMap(points);
 
-    Plotly.newPlot('detail-speed-chart', [
-        { x, y: payload.speed_mph, type: 'scatter', mode: 'lines', line: { color: token('--lg-gold'), width: 1.5 } },
-    ], baseLayout('Speed (mph)', { xaxis: { gridcolor: token('--lg-border'), zeroline: false, title: { text: 'Elapsed Time (min)', font: { size: 11 } } } }), { responsive: true, displaylogo: false });
+    const x = elapsedMinutes(points);
+    const pace = points.map(p => paceMinPerMile(p.speed_mph));
 
-    Plotly.newPlot('detail-power-chart', [
-        { x, y: payload.power_w, type: 'scatter', mode: 'lines', line: { color: token('--lg-highlight'), width: 1.5 } },
-    ], baseLayout('Power (watts)', { xaxis: { gridcolor: token('--lg-border'), zeroline: false, title: { text: 'Elapsed Time (min)', font: { size: 11 } } } }), { responsive: true, displaylogo: false });
+    Plotly.newPlot('detail-pace-chart', [
+        { x, y: pace, type: 'scatter', mode: 'lines', line: { color: token(DETAIL_CHART_COLORS.pace), width: 1.5 }, connectgaps: false },
+    ], baseLayout('Pace (min/mi)', detailXAxis()), { responsive: true, displaylogo: false });
+
+    Plotly.newPlot('detail-hr-chart', [
+        { x, y: points.map(p => p.heart_rate_bpm), type: 'scatter', mode: 'lines', line: { color: token(DETAIL_CHART_COLORS.hr), width: 1.5 } },
+    ], baseLayout('Heart Rate (bpm)', detailXAxis()), { responsive: true, displaylogo: false });
 
     Plotly.newPlot('detail-cadence-chart', [
-        { x, y: payload.cadence_rpm, type: 'scatter', mode: 'lines', line: { color: token('--lg-success'), width: 1.5 } },
-    ], baseLayout('Cadence (rpm)', { xaxis: { gridcolor: token('--lg-border'), zeroline: false, title: { text: 'Elapsed Time (min)', font: { size: 11 } } } }), { responsive: true, displaylogo: false });
+        { x, y: points.map(p => p.cadence_spm), type: 'scatter', mode: 'lines', line: { color: token(DETAIL_CHART_COLORS.cadence), width: 1.5 } },
+    ], baseLayout('Cadence (spm)', detailXAxis()), { responsive: true, displaylogo: false });
+
+    Plotly.newPlot('detail-power-chart', [
+        { x, y: points.map(p => p.power_w), type: 'scatter', mode: 'lines', line: { color: token(DETAIL_CHART_COLORS.power), width: 1.5 } },
+    ], baseLayout('Power (watts)', detailXAxis()), { responsive: true, displaylogo: false });
 
     Plotly.newPlot('detail-zones-chart', [
         { x: payload.zones.labels, y: payload.zones.minutes, type: 'bar', marker: { color: token('--lg-info') } },
@@ -191,6 +268,6 @@ async function loadDetail() {
 }
 
 loadOverview().catch((error) => console.error('Failed to load activities overview', error));
-loadDetail().catch((error) => console.error('Failed to load activity detail', error));
+loadDetail('running', null).catch((error) => console.error('Failed to load activity detail', error));
 </script>
 {% endblock %}

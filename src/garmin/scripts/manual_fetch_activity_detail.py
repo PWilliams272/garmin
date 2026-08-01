@@ -13,6 +13,7 @@ load_dotenv()
 import argparse
 
 from garmin.api import GarminSession
+from garmin.io.curated_store import CuratedDataStore
 from garmin.io.file_manager import FileManager
 from garmin.pullers.activities import ActivityPuller
 
@@ -57,9 +58,10 @@ def main(argv: list[str] | None = None) -> None:
     print(detail_df.head())
 
     fm = FileManager(environment="aws" if args.storage_target == "s3" else "local")
-    path = f"curated/activities/detail/{args.activity_type}/timeseries/activity_id={activity_id}.parquet"
-    fm.write_df(detail_df, path, format="parquet")
-    print(f"Wrote {path} ({args.storage_target}).")
+    store = CuratedDataStore(file_manager=fm)
+    dataset = f"{args.activity_type}_timeseries"
+    store.write_activity_detail(dataset, activity_id, detail_df)
+    print(f"Wrote {store.activity_detail_path(dataset, activity_id)} ({args.storage_target}).")
 
 
 if __name__ == "__main__":

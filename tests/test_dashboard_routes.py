@@ -262,3 +262,64 @@ def test_data_status_payload_empty_when_nothing_pulled(tmp_path, monkeypatch) ->
 
     assert payload['datasets'] == []
     assert payload['dates'] == []
+
+
+def _seed_running_timeseries(store, activity_id: str, date: str) -> None:
+    store.merge_activity_summary('running', pd.DataFrame([
+        {'activity_id': activity_id, 'date': date, 'name': 'Test Run', 'duration_min': 20.0, 'distance_mi': 2.5},
+    ]))
+    store.write_activity_detail('running_timeseries', activity_id, pd.DataFrame([
+        {'timestamp': f'{date}T08:00:00', 'lat': 40.0, 'lon': -105.0, 'elevation_ft': 100.0,
+         'distance_mi': 0.0, 'speed_mph': 0.0, 'cadence_spm': 90.0, 'heart_rate_bpm': 100.0, 'power_w': 0.0},
+        {'timestamp': f'{date}T08:00:10', 'lat': 40.001, 'lon': -105.001, 'elevation_ft': 101.0,
+         'distance_mi': 0.02, 'speed_mph': 7.0, 'cadence_spm': 170.0, 'heart_rate_bpm': 140.0, 'power_w': 250.0},
+    ]))
+
+
+def test_activity_detail_real_payload_reads_precomputed_timeseries(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
+    store = routes_module.curated_local
+    _seed_running_timeseries(store, '111', '2024-01-01')
+
+    payload = routes_module._activity_detail_real_payload(sport='running', source='local')
+
+    assert payload is not None
+    assert payload['activity_id'] == '111'
+    assert payload['activity']['name'] == 'Test Run'
+    assert len(payload['points']) == 2
+    assert payload['points'][0]['lat'] == 40.0
+    assert sum(payload['zones']['minutes']) > 0
+
+
+def test_activity_detail_real_payload_picks_most_recent_with_timeseries(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
+    store = routes_module.curated_local
+    _seed_running_timeseries(store, '111', '2024-01-01')
+    _seed_running_timeseries(store, '222', '2024-06-01')
+    # A third activity with a summary row but no timeseries file shouldn't
+    # be selectable.
+    store.merge_activity_summary('running', pd.DataFrame([
+        {'activity_id': '333', 'date': '2024-12-01', 'name': 'No Detail', 'duration_min': 20.0, 'distance_mi': 2.5},
+    ]))
+
+    payload = routes_module._activity_detail_real_payload(sport='running', source='local')
+
+    assert payload['activity_id'] == '222'
+
+
+def test_activity_detail_real_payload_returns_none_without_data(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
+
+    assert routes_module._activity_detail_real_payload(sport='running', source='local') is None
+
+
+def test_activity_detail_data_route_falls_back_to_mock(monkeypatch) -> None:
+    app = create_app()
+    monkeypatch.setattr(routes_module, '_activity_detail_real_payload', lambda sport='running', activity_id=None, source='local': None)
+
+    with app.test_client() as client:
+        response = client.get('/api/activity_detail_data?sport=running')
+
+    payload = response.get_json()
+    assert payload['mock'] is True
+    assert len(payload['points']) > 0
