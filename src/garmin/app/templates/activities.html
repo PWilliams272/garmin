@@ -211,10 +211,16 @@ function elapsedMinutes(points) {
     return points.map(p => ((new Date(p.timestamp).getTime() - t0) / 60000).toFixed(2));
 }
 
-// min/mile pace from mph; null (gap in the line) below walking speed so
-// stopped/paused stretches don't spike the chart toward infinity.
+// min/mile pace from mph; null (no point) below jogging speed. This isn't
+// glitch rejection (the backend already handles that) -- it's that pace is
+// 60/speed, so the few real, genuine samples right as you accelerate out
+// of a stop (0 -> 1 -> 2 -> 4 -> 7 mph) still produce real but meaningless
+// pace values that "race down" toward the actual pace over several points.
+// A 1mph cutoff let most of that transient through; ~3mph (a brisk walk)
+// is where a low-but-real speed reading stops meaning "still slowing down/
+// speeding up from a stop" and starts being an actual pace worth plotting.
 function paceMinPerMile(speedMph) {
-    return speedMph && speedMph > 1 ? 60 / speedMph : null;
+    return speedMph && speedMph > 3 ? 60 / speedMph : null;
 }
 
 function renderDetailMap(points) {
@@ -273,20 +279,27 @@ async function loadDetail(sport, activityId) {
     const x = elapsedMinutes(points);
     const pace = points.map(p => paceMinPerMile(p.speed_mph));
 
+    // Scatter, not lines -- these are dense (often 1000s of 1Hz points per
+    // activity, see get_activity_fit_timeseries), and the backend already
+    // rejects sensor/GPS-glitch outliers (_reject_activity_detail_outliers)
+    // before this ever reaches the frontend, so there's no trend to fit,
+    // just the raw (cleaned) readings.
+    const detailMarker = (color) => ({ color: token(color), size: 2.5, opacity: 0.5 });
+
     Plotly.newPlot('detail-pace-chart', [
-        { x, y: pace, type: 'scatter', mode: 'lines', line: { color: token(DETAIL_CHART_COLORS.pace), width: 1.5 }, connectgaps: false },
+        { x, y: pace, type: 'scatter', mode: 'markers', marker: detailMarker(DETAIL_CHART_COLORS.pace) },
     ], baseLayout('Pace (min/mi)', detailXAxis()), { responsive: true, displaylogo: false });
 
     Plotly.newPlot('detail-hr-chart', [
-        { x, y: points.map(p => p.heart_rate_bpm), type: 'scatter', mode: 'lines', line: { color: token(DETAIL_CHART_COLORS.hr), width: 1.5 } },
+        { x, y: points.map(p => p.heart_rate_bpm), type: 'scatter', mode: 'markers', marker: detailMarker(DETAIL_CHART_COLORS.hr) },
     ], baseLayout('Heart Rate (bpm)', detailXAxis()), { responsive: true, displaylogo: false });
 
     Plotly.newPlot('detail-cadence-chart', [
-        { x, y: points.map(p => p.cadence), type: 'scatter', mode: 'lines', line: { color: token(DETAIL_CHART_COLORS.cadence), width: 1.5 } },
+        { x, y: points.map(p => p.cadence), type: 'scatter', mode: 'markers', marker: detailMarker(DETAIL_CHART_COLORS.cadence) },
     ], baseLayout('Cadence (spm running / rpm cycling)', detailXAxis()), { responsive: true, displaylogo: false });
 
     Plotly.newPlot('detail-power-chart', [
-        { x, y: points.map(p => p.power_w), type: 'scatter', mode: 'lines', line: { color: token(DETAIL_CHART_COLORS.power), width: 1.5 } },
+        { x, y: points.map(p => p.power_w), type: 'scatter', mode: 'markers', marker: detailMarker(DETAIL_CHART_COLORS.power) },
     ], baseLayout('Power (watts)', detailXAxis()), { responsive: true, displaylogo: false });
 
     Plotly.newPlot('detail-zones-chart', [

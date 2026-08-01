@@ -366,3 +366,42 @@ def test_activity_detail_data_route_falls_back_to_mock(monkeypatch) -> None:
     payload = response.get_json()
     assert payload['mock'] is True
     assert len(payload['points']) > 0
+
+def test_reject_activity_detail_outliers_nulls_a_glitch_but_keeps_stable_readings() -> None:
+    # A heart rate wobbling naturally around 140 (+/- a couple bpm -- MAD-
+    # based detection needs some real spread to work with; a perfectly flat
+    # baseline makes the median absolute deviation exactly 0, which the
+    # classifier treats as "can't judge" rather than "everything's an
+    # outlier") with one implausible one-sample spike to 250 in the middle --
+    # a classic sensor glitch. Speed stays clean throughout and shouldn't be
+    # touched.
+    n = 20
+    jitter = [0, 1, -1, 2, -2, 1, 0, -1, 1, 0, 0, -1, 1, 0, -2, 2, 1, -1, 0, 1]
+    hr = [140.0 + j for j in jitter]
+    hr[10] = 250.0
+    detail = pd.DataFrame({
+        'timestamp': pd.date_range('2024-01-01', periods=n, freq='s'),
+        'speed_mph': [7.0] * n,
+        'heart_rate_bpm': hr,
+        'cadence': [170.0] * n,
+        'power_w': [200.0] * n,
+    })
+
+    cleaned = routes_module._reject_activity_detail_outliers(detail)
+
+    assert pd.isna(cleaned.loc[10, 'heart_rate_bpm'])
+    assert cleaned['heart_rate_bpm'].dropna().between(137.0, 143.0).all()
+    assert cleaned['speed_mph'].notna().all()
+    assert cleaned['speed_mph'].eq(7.0).all()
+
+
+def test_reject_activity_detail_outliers_skips_short_series() -> None:
+    detail = pd.DataFrame({
+        'timestamp': pd.date_range('2024-01-01', periods=3, freq='s'),
+        'heart_rate_bpm': [100.0, 999.0, 100.0],
+    })
+
+    cleaned = routes_module._reject_activity_detail_outliers(detail)
+
+    # Fewer than 5 valid points -- classify_metric is skipped, nothing nulled.
+    assert cleaned['heart_rate_bpm'].notna().all()

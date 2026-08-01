@@ -586,6 +586,31 @@ def _activities_overview_from_df(df: pd.DataFrame) -> dict:
 HR_ZONE_LABELS = ['Z1 Recovery', 'Z2 Endurance', 'Z3 Tempo', 'Z4 Threshold', 'Z5 VO2max']
 HR_ZONE_BOUNDS = [0, 114, 133, 152, 171, 999]
 
+# Per-point metrics worth screening for sensor/GPS glitches within a single
+# activity (a momentary HR dropout, a GPS-jump speed spike, ...). Each
+# column is classified independently -- one metric glitching at a given
+# instant doesn't invalidate the others at that same timestamp.
+ACTIVITY_DETAIL_OUTLIER_METRICS = ['speed_mph', 'heart_rate_bpm', 'cadence', 'power_w']
+
+
+def _reject_activity_detail_outliers(detail: pd.DataFrame) -> pd.DataFrame:
+    """Null out hard-tier (very likely sensor/GPS glitch) values in place,
+    reusing the same classify_metric() used for health metrics -- its
+    local-neighborhood check (rolling-median deviation) is exactly what
+    catches a momentary spike in a densely-sampled series like this, even
+    though the "local window" here is ~15 seconds instead of ~15 days.
+    Soft-tier points are left alone (kept, not visually distinguished --
+    this view is dense scatter, not a trend fit, so there's no weighting
+    to apply them to).
+    """
+    detail = detail.copy()
+    for metric in ACTIVITY_DETAIL_OUTLIER_METRICS:
+        if metric not in detail.columns or detail[metric].notna().sum() < 5:
+            continue
+        classified = classify_metric(detail[['timestamp', metric]], metric, date_col='timestamp')
+        detail.loc[classified['quality_tier'].to_numpy() == 'hard', metric] = None
+    return detail
+
 
 def _activity_detail_real_payload(sport: str = 'running', activity_id: str | None = None, source: str = 'local') -> dict | None:
     """Real per-point activity detail (map + pace/HR/cadence/power charts),
@@ -620,6 +645,7 @@ def _activity_detail_real_payload(sport: str = 'running', activity_id: str | Non
         return None
 
     detail = detail.dropna(subset=['timestamp']).sort_values('timestamp').reset_index(drop=True)
+    detail = _reject_activity_detail_outliers(detail)
 
     summary = store.load_activity_summary(sport)
     activity_meta = {'type': sport, 'name': None, 'date': None, 'duration_min': None, 'distance_mi': None}
