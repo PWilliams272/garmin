@@ -4,7 +4,7 @@ import pandas as pd
 
 from garmin.io.curated_store import CuratedDataStore
 from garmin.io.file_manager import FileManager
-from garmin.pullers.activities import ActivityPuller
+from garmin.pullers.activities import METERS_PER_FOOT, ActivityPuller
 from garmin.updaters import DataUpdater
 
 
@@ -111,6 +111,58 @@ def test_get_activity_gps_handles_missing_polyline_gracefully() -> None:
     puller = ActivityPuller(StubDetailSession({}))
 
     df = puller.get_activity_gps("123")
+
+    assert df.empty
+
+
+# metricDescriptors order + one real point, taken verbatim from a live pull
+# against a real running activity (2026-07-31, activity 23528115932) --
+# see get_activity_timeseries's docstring.
+REAL_METRIC_DESCRIPTORS = [
+    {"metricsIndex": i, "key": key} for i, key in enumerate([
+        "directRunCadence", "directFractionalCadence", "directAvailableStamina", "directBodyBattery",
+        "sumDistance", "directPower", "directGradeAdjustedSpeed", "directElevation", "directDoubleCadence",
+        "directLongitude", "sumDuration", "directHeartRate", "directTimestamp", "directSpeed",
+        "sumElapsedDuration", "directLatitude", "sumMovingDuration", "directPotentialStamina",
+        "directVerticalSpeed", "directGroundContactTime", "directStrideLength", "directVerticalOscillation",
+        "directVerticalRatio", "sumAccumulatedPower", "directPerformanceCondition",
+    ])
+]
+REAL_METRIC_POINT = {
+    "metrics": [
+        80.0, 0.5, 91.0, 54.0, 1973.5899658203125, 488.0, 3.683000087738037, 63.20000076293945, 161.0,
+        -118.4442356787622, 569.0, 130.0, 1783540789000.0, 3.5460000038146973, 606.0, 34.03996204957366,
+        568.0, 91.0, 0.20000000298023224, 272.0, 132.9, 10.15999984741211, 7.639999866485596, 250346.0, None,
+    ]
+}
+
+
+def test_get_activity_timeseries_parses_real_response_shape() -> None:
+    detail_response = {
+        "metricDescriptors": REAL_METRIC_DESCRIPTORS,
+        "activityDetailMetrics": [REAL_METRIC_POINT],
+    }
+    puller = ActivityPuller(StubDetailSession(detail_response))
+
+    df = puller.get_activity_timeseries("23528115932")
+
+    assert len(df) == 1
+    row = df.iloc[0]
+    assert row["lat"] == 34.03996204957366
+    assert row["lon"] == -118.4442356787622
+    # directDoubleCadence (161), not directRunCadence (80) -- see docstring.
+    assert row["cadence_spm"] == 161.0
+    assert row["heart_rate_bpm"] == 130.0
+    assert row["power_w"] == 488.0
+    assert row["elevation_ft"] == round(63.20000076293945 / METERS_PER_FOOT, 1)
+    assert row["speed_mph"] == round(3.5460000038146973 * 2.236936, 2)
+    assert row["timestamp"] == pd.Timestamp(1783540789000, unit="ms")
+
+
+def test_get_activity_timeseries_handles_empty_response_gracefully() -> None:
+    puller = ActivityPuller(StubDetailSession({}))
+
+    df = puller.get_activity_timeseries("123")
 
     assert df.empty
 

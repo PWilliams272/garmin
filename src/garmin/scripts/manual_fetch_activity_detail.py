@@ -1,10 +1,11 @@
-"""Spike: pull one real GPS-based activity's lat/lng track for map-prototyping.
+"""Spike: pull one real activity's full per-point time series (GPS + speed/
+cadence/HR/power/...) for prototyping a detail view (map, pace/HR charts).
 
-Not part of the scheduled pipeline -- ActivityPuller.get_activity_gps() hasn't
-been verified against a live Garmin response yet (see its docstring), and this
-script's only job is to get one concrete sample on disk so a map view
-(e.g. Plotly Scattermapbox) can be prototyped against real data. Requires a
-live Garmin login (local dev only), same as manual_update.py.
+Not part of the scheduled pipeline -- ActivityPuller.get_activity_timeseries()
+is verified against a live response (see its docstring) but not yet wired
+into update_all() or any curated storage convention; this script's only job
+is to get one concrete sample on disk. Requires a live Garmin login (local
+dev only), same as manual_update.py.
 """
 from dotenv import load_dotenv
 load_dotenv()
@@ -46,18 +47,18 @@ def main(argv: list[str] | None = None) -> None:
         activity_id = str(max(activities, key=lambda a: a["startTimeLocal"])["activityId"])
         print(f"Using most recent {args.activity_type} activity: {activity_id}")
 
-    gps_df = puller.get_activity_gps(activity_id)
-    if gps_df.empty:
-        print(f"No GPS track returned for activity {activity_id} -- check ActivityPuller.get_activity_gps's "
-              "docstring, the endpoint/response shape likely needs adjusting.")
+    detail_df = puller.get_activity_timeseries(activity_id)
+    if detail_df.empty:
+        print(f"No detail time series returned for activity {activity_id} -- check "
+              "ActivityPuller.get_activity_timeseries's docstring, the endpoint/response shape may have changed.")
         return
 
-    print(f"Pulled {len(gps_df)} GPS points.")
-    print(gps_df.head())
+    print(f"Pulled {len(detail_df)} points.")
+    print(detail_df.head())
 
     fm = FileManager(environment="aws" if args.storage_target == "s3" else "local")
-    path = f"curated/activities/detail/{args.activity_type}/gps/activity_id={activity_id}.parquet"
-    fm.write_df(gps_df, path, format="parquet")
+    path = f"curated/activities/detail/{args.activity_type}/timeseries/activity_id={activity_id}.parquet"
+    fm.write_df(detail_df, path, format="parquet")
     print(f"Wrote {path} ({args.storage_target}).")
 
 
