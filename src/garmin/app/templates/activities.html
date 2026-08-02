@@ -134,6 +134,32 @@ function formatActivityWhen(activity) {
     return activity.date;
 }
 
+function buildActivityListItem(activity) {
+    const el = document.createElement('div');
+    el.className = 'activity-list-item' + (activity.activity_id === state.selectedId ? ' active' : '');
+    const distance = activity.distance_mi === null || activity.distance_mi === undefined ? null : activity.distance_mi.toFixed(1) + ' mi';
+    const duration = activity.duration_min === null || activity.duration_min === undefined ? '—' : activity.duration_min.toFixed(0) + ' min';
+    const hr = activity.avg_hr === null || activity.avg_hr === undefined ? null : Math.round(activity.avg_hr) + ' bpm';
+    const statLine = [distance, duration, hr].filter(Boolean).join(' · ');
+    el.innerHTML = `
+        <div class="activity-list-item-top">
+            <span class="activity-list-item-name"><span class="activity-type-dot" style="background:${token(TYPE_COLORS[activity.type] || '--lg-gold')}"></span>${activity.name || typeLabel(activity.type)}</span>
+        </div>
+        <div class="activity-list-item-meta"><span>${typeLabel(activity.type)}</span><span>${formatActivityWhen(activity)}</span></div>
+        <div class="activity-list-item-meta"><span>${statLine}</span></div>
+    `;
+    el.addEventListener('click', () => selectActivity(activity.activity_id, activity.type));
+    return el;
+}
+
+// Full history can be 3000+ activities -- rendering every list item
+// synchronously blocks the main thread and makes filter/sort changes feel
+// frozen. Paint the first screenful immediately, then fill in the rest in
+// requestAnimationFrame-batched chunks so it's never visibly blocking.
+const LIST_INITIAL_RENDER_COUNT = 20;
+const LIST_BACKGROUND_CHUNK_SIZE = 200;
+let listRenderToken = 0;
+
 function applyFiltersAndRenderList() {
     const typeFilter = document.getElementById('type-filter').value;
     const sortBy = document.getElementById('sort-by').value;
@@ -148,28 +174,36 @@ function applyFiltersAndRenderList() {
     };
     items = items.slice().sort(sorters[sortBy] || sorters.date_desc);
 
+    // Invalidate any in-flight background render loop from a previous call
+    // (e.g. rapid filter changes) before starting a new one.
+    const myRenderToken = ++listRenderToken;
+
     const list = document.getElementById('activity-list');
     list.innerHTML = '';
-    items.forEach((activity) => {
-        const el = document.createElement('div');
-        el.className = 'activity-list-item' + (activity.activity_id === state.selectedId ? ' active' : '');
-        const distance = activity.distance_mi === null || activity.distance_mi === undefined ? null : activity.distance_mi.toFixed(1) + ' mi';
-        const duration = activity.duration_min === null || activity.duration_min === undefined ? '—' : activity.duration_min.toFixed(0) + ' min';
-        const hr = activity.avg_hr === null || activity.avg_hr === undefined ? null : Math.round(activity.avg_hr) + ' bpm';
-        const statLine = [distance, duration, hr].filter(Boolean).join(' · ');
-        el.innerHTML = `
-            <div class="activity-list-item-top">
-                <span class="activity-list-item-name"><span class="activity-type-dot" style="background:${token(TYPE_COLORS[activity.type] || '--lg-gold')}"></span>${activity.name || typeLabel(activity.type)}</span>
-            </div>
-            <div class="activity-list-item-meta"><span>${typeLabel(activity.type)}</span><span>${formatActivityWhen(activity)}</span></div>
-            <div class="activity-list-item-meta"><span>${statLine}</span></div>
-        `;
-        el.addEventListener('click', () => selectActivity(activity.activity_id, activity.type));
-        list.appendChild(el);
-    });
 
     if (!items.length) {
         list.innerHTML = '<div class="status-line" style="padding: 12px 16px;">No activities match this filter.</div>';
+        return;
+    }
+
+    const firstChunk = items.slice(0, LIST_INITIAL_RENDER_COUNT);
+    firstChunk.forEach((activity) => list.appendChild(buildActivityListItem(activity)));
+
+    let idx = LIST_INITIAL_RENDER_COUNT;
+    function renderNextChunk() {
+        if (myRenderToken !== listRenderToken) return;
+        const frag = document.createDocumentFragment();
+        const end = Math.min(idx + LIST_BACKGROUND_CHUNK_SIZE, items.length);
+        for (; idx < end; idx++) {
+            frag.appendChild(buildActivityListItem(items[idx]));
+        }
+        list.appendChild(frag);
+        if (idx < items.length) {
+            requestAnimationFrame(renderNextChunk);
+        }
+    }
+    if (idx < items.length) {
+        requestAnimationFrame(renderNextChunk);
     }
 }
 

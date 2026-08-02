@@ -146,8 +146,12 @@ def test_activities_list_payload_returns_none_when_no_data(tmp_path, monkeypatch
     assert routes_module._activities_list_payload(source='local') is None
 
 
-def test_activities_list_data_route_falls_back_to_mock(monkeypatch) -> None:
+def test_activities_list_data_route_falls_back_to_mock(tmp_path, monkeypatch) -> None:
     app = create_app()
+    # No viewer-cache file in an empty tmp_dir -- _cached_or_live falls
+    # through to _activities_list_payload (monkeypatched below) rather than
+    # reading whatever real cache this machine happens to have on disk.
+    monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
     monkeypatch.setattr(routes_module, '_activities_list_payload', lambda source='local': None)
 
     with app.test_client() as client:
@@ -157,6 +161,27 @@ def test_activities_list_data_route_falls_back_to_mock(monkeypatch) -> None:
     assert payload['mock'] is True
     assert len(payload['activities']) > 0
     assert 'avg_hr' in payload['activities'][0]
+
+
+def test_activities_list_data_route_prefers_viewer_cache(tmp_path, monkeypatch) -> None:
+    app = create_app()
+    monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
+    routes_module.curated_local.write_viewer_cache('activities_list_local', {
+        'activity_types': ['running'],
+        'activities': [{'activity_id': '1', 'type': 'running'}],
+    })
+
+    def fail_if_called(source='local'):
+        raise AssertionError('should not hit the live builder when a cache entry exists')
+
+    monkeypatch.setattr(routes_module, '_activities_list_payload', fail_if_called)
+
+    with app.test_client() as client:
+        response = client.get('/api/activities_list_data?source=local')
+
+    payload = response.get_json()
+    assert payload['mock'] is False
+    assert payload['activities'] == [{'activity_id': '1', 'type': 'running'}]
 
 
 def test_lifting_real_payload_reads_precomputed_analyzed_data(tmp_path, monkeypatch) -> None:

@@ -911,7 +911,7 @@ def api_activities_list_data():
 
     try:
         is_mock = False
-        payload = _activities_list_payload(source=source)
+        payload = _cached_or_live(f'activities_list_{source}', source, lambda: _activities_list_payload(source=source))
         if payload is None:
             payload = _mock_activities_list_payload()
             is_mock = True

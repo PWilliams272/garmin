@@ -40,6 +40,7 @@ def build_viewer_cache(storage_target: str) -> None:
         (f'fitness_running_{source}', lambda: app_routes._running_real_payload(source=source)),
         (f'fitness_lifting_{source}', lambda: app_routes._lifting_real_payload(source=source)),
         (f'activities_overview_{source}', lambda: app_routes._activities_real_payload(source=source)),
+        (f'activities_list_{source}', lambda: app_routes._activities_list_payload(source=source)),
         (f'data_status_{source}', lambda: app_routes._data_status_payload(source=source)),
     ]
 
