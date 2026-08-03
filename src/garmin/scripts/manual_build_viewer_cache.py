@@ -55,15 +55,19 @@ def build_viewer_cache(storage_target: str) -> None:
     for cache_name, build_fn in jobs:
         try:
             payload = build_fn()
+            if payload is None:
+                print(f"Skipped {cache_name}: no data to cache yet.")
+                continue
+            store.write_viewer_cache(cache_name, payload)
+            print(f"Wrote viewer_cache/{cache_name}.json.")
         except Exception as exc:
+            # Covers both the build and the write -- a transient network
+            # error can hit either (e.g. the read side pulling analyzed
+            # parquet, or the write side pushing the cache JSON itself),
+            # and either one failing should still let independent jobs
+            # after it run.
             print(f"FAILED {cache_name}: {exc!r}")
             failures.append(cache_name)
-            continue
-        if payload is None:
-            print(f"Skipped {cache_name}: no data to cache yet.")
-            continue
-        store.write_viewer_cache(cache_name, payload)
-        print(f"Wrote viewer_cache/{cache_name}.json.")
 
     # HTML pages (not JSON payloads) get their own cache path -- see
     # CuratedDataStore.write_viewer_cache_html / _cached_html_or_live in
@@ -74,12 +78,11 @@ def build_viewer_cache(storage_target: str) -> None:
     for cache_name, build_fn in html_jobs:
         try:
             html = build_fn()
+            store.write_viewer_cache_html(cache_name, html)
+            print(f"Wrote viewer_cache/{cache_name}.html.")
         except Exception as exc:
             print(f"FAILED {cache_name}: {exc!r}")
             failures.append(cache_name)
-            continue
-        store.write_viewer_cache_html(cache_name, html)
-        print(f"Wrote viewer_cache/{cache_name}.html.")
 
     if failures:
         raise RuntimeError(f"viewer cache build had {len(failures)} failure(s): {', '.join(failures)}")
