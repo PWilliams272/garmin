@@ -286,6 +286,43 @@ def test_cached_or_live_falls_back_when_no_cache(tmp_path, monkeypatch) -> None:
     assert result == {'from': 'live'}
 
 
+def test_cached_html_or_live_prefers_cache_over_build_fn(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
+    routes_module.curated_local.write_viewer_cache_html('activity_explorer_local', '<html>cached</html>')
+
+    build_fn_calls = []
+
+    def build_fn():
+        build_fn_calls.append(1)
+        return '<html>live</html>'
+
+    result = routes_module._cached_html_or_live('activity_explorer_local', 'local', build_fn)
+
+    assert result == '<html>cached</html>'
+    assert build_fn_calls == []
+
+
+def test_cached_html_or_live_falls_back_when_no_cache(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
+
+    result = routes_module._cached_html_or_live('activity_explorer_local', 'local', lambda: '<html>live</html>')
+
+    assert result == '<html>live</html>'
+
+
+def test_muscle_explorer_route_serves_cached_html(tmp_path, monkeypatch) -> None:
+    app = create_app()
+    monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
+    routes_module.curated_local.write_viewer_cache_html('activity_explorer_local', '<html><body>cached explorer</body></html>')
+
+    with app.test_client() as client:
+        response = client.get('/muscle_explorer?source=local')
+
+    assert response.status_code == 200
+    assert response.content_type.startswith('text/html')
+    assert b'cached explorer' in response.data
+
+
 def test_data_status_payload_empty_when_nothing_pulled(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
 

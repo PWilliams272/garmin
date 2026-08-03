@@ -197,6 +197,27 @@ class CuratedDataStore:
     def write_viewer_cache(self, name: str, payload: dict) -> None:
         self.file_manager.write_text(json.dumps(payload), self.viewer_cache_path(name))
 
+    @staticmethod
+    def viewer_cache_html_path(name: str) -> str:
+        return f"viewer_cache/{name}.html"
+
+    def load_viewer_cache_html(self, name: str) -> str | None:
+        """Same as load_viewer_cache but for a precomputed full HTML page
+        (e.g. the activity-explorer prototype) rather than a JSON payload --
+        None on a cache miss, same fallback contract."""
+        try:
+            return self.file_manager.read_text(self.viewer_cache_html_path(name))
+        except FileNotFoundError:
+            return None
+        except ClientError as exc:
+            error_code = exc.response.get("Error", {}).get("Code")
+            if error_code in {"404", "NoSuchKey"}:
+                return None
+            raise
+
+    def write_viewer_cache_html(self, name: str, html: str) -> None:
+        self.file_manager.write_text(html, self.viewer_cache_html_path(name))
+
     def write_detailed_day(self, dataset: str, query_date: str, df: pd.DataFrame) -> None:
         if df.empty:
             return

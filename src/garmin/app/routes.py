@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, render_template, request, url_for, redirect
+from flask import Blueprint, Response, jsonify, render_template, request, url_for, redirect
 from garmin.io.curated_store import CuratedDataStore
 from garmin.io.file_manager import FileManager
 from garmin.data_processor.processor import GarminDataProcessor
@@ -6,6 +6,7 @@ from garmin.analysis.quality import classify_metric
 from garmin.analysis.trend_gp import fit_gp_trend
 from garmin.analysis.analysis_pipeline import STRENGTH_EXERCISE_CANDIDATES
 from garmin.updaters import ACTIVITY_DATASETS
+from garmin.prototypes.activity_explorer import build_activity_explorer_html
 import numpy as np
 import pandas as pd
 import os
@@ -85,6 +86,16 @@ def _cached_or_live(cache_name: str, source: str, build_fn):
     """
     store = curated_s3 if source == 's3' else curated_local
     cached = store.load_viewer_cache(cache_name)
+    if cached is not None:
+        return cached
+    return build_fn()
+
+
+def _cached_html_or_live(cache_name: str, source: str, build_fn):
+    """Same contract as _cached_or_live, for a precomputed full HTML page
+    (see garmin.prototypes.activity_explorer) rather than a JSON payload."""
+    store = curated_s3 if source == 's3' else curated_local
+    cached = store.load_viewer_cache_html(cache_name)
     if cached is not None:
         return cached
     return build_fn()
@@ -965,6 +976,24 @@ def api_recommend():
 @bp.route('/data_status')
 def data_status():
     return render_template('data_status.html', active_section='data_status')
+
+
+@bp.route('/muscle_explorer')
+def muscle_explorer():
+    """Serves the standalone lifting/climbing/muscle-map prototype (see
+    garmin.prototypes.activity_explorer) as a real page instead of a
+    manually-regenerated local file. Prefers the precomputed viewer-cache
+    HTML (built by manual_build_viewer_cache.py) -- live-building this
+    against S3 means garmin.io.curated_store.load_all_activity_details
+    doing one S3 GET per strength-session detail file (490+ as of
+    2026-08), so an uncached hit would be very slow.
+    """
+    source = request.args.get('source', DEFAULT_SOURCE)
+    if source not in {'local', 's3'}:
+        source = DEFAULT_SOURCE
+    store = curated_s3 if source == 's3' else curated_local
+    html = _cached_html_or_live(f'activity_explorer_{source}', source, lambda: build_activity_explorer_html(store))
+    return Response(html, mimetype='text/html')
 
 
 @bp.route('/api/data_status_data')

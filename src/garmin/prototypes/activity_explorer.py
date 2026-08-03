@@ -472,6 +472,7 @@ def build_activity_explorer_html(store: CuratedDataStore) -> str:
 </head>
 <body>
   <div class=\"page\">
+    <a href=\"/\" style=\"display: inline-block; margin-bottom: 10px; color: var(--muted); font-size: 0.85rem; text-decoration: none;\">&larr; Back to Garmin</a>
     <section class=\"hero\">
       <div>
         <p class=\"muted\">Standalone exploratory sketch built on top of curated Garmin data</p>

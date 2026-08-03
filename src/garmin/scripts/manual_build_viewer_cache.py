@@ -13,6 +13,7 @@ from garmin.io.file_manager import FileManager
 # logic here) keeps the cached payload and the live-fallback payload
 # guaranteed identical in shape.
 from garmin.app import routes as app_routes
+from garmin.prototypes.activity_explorer import build_activity_explorer_html
 
 
 def build_viewer_cache(storage_target: str) -> None:
@@ -51,6 +52,17 @@ def build_viewer_cache(storage_target: str) -> None:
             continue
         store.write_viewer_cache(cache_name, payload)
         print(f"Wrote viewer_cache/{cache_name}.json.")
+
+    # HTML pages (not JSON payloads) get their own cache path -- see
+    # CuratedDataStore.write_viewer_cache_html / _cached_html_or_live in
+    # garmin/app/routes.py.
+    html_jobs = [
+        (f'activity_explorer_{source}', lambda: build_activity_explorer_html(store)),
+    ]
+    for cache_name, build_fn in html_jobs:
+        html = build_fn()
+        store.write_viewer_cache_html(cache_name, html)
+        print(f"Wrote viewer_cache/{cache_name}.html.")
 
 
 def build_parser() -> argparse.ArgumentParser:
