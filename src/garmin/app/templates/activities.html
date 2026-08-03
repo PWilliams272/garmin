@@ -39,42 +39,123 @@
                 <span id="detail-activity-name">Select an activity</span>
                 <span class="status-line" id="detail-activity-meta"></span>
             </div>
-            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
                 <span class="mock-badge" id="detail-mock-badge" style="display: none;">Mock data</span>
                 <span class="status-line" id="detail-status-line"></span>
-                <select id="basemap-select" class="ghost-button" style="margin-left: auto;">
-                    <option value="carto-positron">Basemap: Light</option>
-                    <option value="carto-darkmatter">Basemap: Dark</option>
-                    <option value="open-street-map">Basemap: Streets</option>
-                    <option value="white-bg">Basemap: None (route only)</option>
-                </select>
             </div>
-            <div class="chart-host" id="detail-map" style="min-height: 320px;"></div>
-            <div class="status-line" id="detail-map-note" style="margin-top: 6px;"></div>
         </div>
 
-        <div class="card chart-card">
-            <div class="section-heading">Pace</div>
-            <div class="chart-host" id="detail-pace-chart"></div>
+        <div id="cardio-detail-cards">
+            <div class="card chart-card">
+                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                    <select id="basemap-select" class="ghost-button" style="margin-left: auto;">
+                        <option value="carto-positron">Basemap: Light</option>
+                        <option value="carto-darkmatter">Basemap: Dark</option>
+                        <option value="open-street-map">Basemap: Streets</option>
+                        <option value="white-bg">Basemap: None (route only)</option>
+                    </select>
+                </div>
+                <div class="chart-host" id="detail-map" style="min-height: 320px;"></div>
+                <div class="status-line" id="detail-map-note" style="margin-top: 6px;"></div>
+            </div>
+            <div class="card chart-card">
+                <div class="section-heading">Pace</div>
+                <div class="chart-host" id="detail-pace-chart"></div>
+            </div>
+            <div class="card chart-card">
+                <div class="section-heading">Heart Rate</div>
+                <div class="chart-host" id="detail-hr-chart"></div>
+            </div>
+            <div class="card chart-card">
+                <div class="section-heading">Cadence</div>
+                <div class="chart-host" id="detail-cadence-chart"></div>
+            </div>
+            <div class="card chart-card">
+                <div class="section-heading">Power</div>
+                <div class="chart-host" id="detail-power-chart"></div>
+            </div>
+            <div class="card chart-card">
+                <div class="section-heading">Time in Heart Rate Zone</div>
+                <div class="chart-host" id="detail-zones-chart"></div>
+            </div>
         </div>
-        <div class="card chart-card">
-            <div class="section-heading">Heart Rate</div>
-            <div class="chart-host" id="detail-hr-chart"></div>
-        </div>
-        <div class="card chart-card">
-            <div class="section-heading">Cadence</div>
-            <div class="chart-host" id="detail-cadence-chart"></div>
-        </div>
-        <div class="card chart-card">
-            <div class="section-heading">Power</div>
-            <div class="chart-host" id="detail-power-chart"></div>
-        </div>
-        <div class="card chart-card">
-            <div class="section-heading">Time in Heart Rate Zone</div>
-            <div class="chart-host" id="detail-zones-chart"></div>
+
+        <div id="strength-detail-cards" style="display: none;">
+            <div class="card chart-card">
+                <div class="section-heading">Muscles Worked</div>
+                <div class="status-line" style="margin-bottom: 10px;">Shading is relative load (reps &times; weight) this session put on each muscle group.</div>
+                <div class="muscle-map-wrap">
+                    <div class="figure-card">{{ front_body_svg|safe }}</div>
+                    <div class="figure-card">{{ back_body_svg|safe }}</div>
+                </div>
+                <div style="display: flex; gap: 16px; align-items: center; margin-top: 10px; font-size: var(--fs-sm); color: var(--lg-text-2);">
+                    <span><span class="status-swatch" style="background: var(--lg-highlight); opacity: 0.25;"></span> lower load</span>
+                    <span><span class="status-swatch" style="background: var(--lg-highlight); opacity: 0.9;"></span> higher load</span>
+                </div>
+            </div>
+            <div class="card chart-card">
+                <div class="section-heading">Sets</div>
+                <div class="table-scroll">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Exercise</th>
+                                <th class="num">Reps</th>
+                                <th class="num">Weight</th>
+                                <th class="num">Rest Before</th>
+                            </tr>
+                        </thead>
+                        <tbody id="strength-sets-body"></tbody>
+                    </table>
+                </div>
+            </div>
         </div>
     </section>
 </div>
+
+<style>
+.status-swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    margin-right: 4px;
+    vertical-align: middle;
+}
+.muscle-map-wrap {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+.figure-card {
+    border: 1px solid var(--lg-border);
+    border-radius: var(--lg-radius-lg);
+    background: var(--lg-bg);
+    padding: 8px;
+}
+.figure-card svg {
+    width: 100%;
+    height: auto;
+    display: block;
+}
+.silhouette {
+    fill: var(--lg-active);
+    stroke: var(--lg-border);
+    stroke-width: 1.5;
+}
+.muscle-region {
+    fill: var(--lg-active);
+    stroke: var(--lg-border-h);
+    stroke-width: 1;
+}
+.body-label {
+    font-size: 10px;
+    fill: var(--lg-text-2);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+</style>
 
 <script>
 function token(name) {
@@ -334,6 +415,35 @@ document.getElementById('basemap-select').addEventListener('change', () => {
     if (state.detailPoints) renderDetailMap(state.detailPoints);
 });
 
+function renderStrengthDetail(payload) {
+    const maxLoad = Math.max(1, ...Object.values(payload.muscle_load || {}));
+    document.querySelectorAll('.muscle-region').forEach((region) => {
+        const muscle = region.dataset.muscle;
+        const value = (payload.muscle_load || {})[muscle] || 0;
+        const alpha = value ? 0.18 + 0.72 * Math.sqrt(value / maxLoad) : 0.06;
+        region.style.fill = `color-mix(in srgb, ${token('--lg-highlight')} ${(alpha * 100).toFixed(0)}%, transparent)`;
+    });
+
+    const body = document.getElementById('strength-sets-body');
+    body.innerHTML = '';
+    (payload.sets || []).forEach((set) => {
+        const tr = document.createElement('tr');
+        const weight = set.weight_lb === null || set.weight_lb === undefined ? '—' : set.weight_lb.toFixed(1) + ' lb';
+        const rest = set.rest_s === null || set.rest_s === undefined ? '—' : Math.round(set.rest_s / 60) + ':' + String(Math.round(set.rest_s % 60)).padStart(2, '0');
+        tr.innerHTML = `
+            <td>${set.set_number}</td>
+            <td>${set.exercise_label || typeLabel(set.exercise)}</td>
+            <td class="num">${set.reps ?? '—'}</td>
+            <td class="num">${weight}</td>
+            <td class="num">${rest}</td>
+        `;
+        body.appendChild(tr);
+    });
+    if (!(payload.sets || []).length) {
+        body.innerHTML = '<tr><td colspan="5" class="status-line" style="padding: 12px;">No set data for this session.</td></tr>';
+    }
+}
+
 async function loadDetail(sport, activityId) {
     sport = sport || 'running';
     let url = '/api/activity_detail_data?sport=' + encodeURIComponent(sport);
@@ -348,8 +458,18 @@ async function loadDetail(sport, activityId) {
     );
 
     document.getElementById('detail-activity-name').textContent = payload.activity.name || 'Activity';
-    document.getElementById('detail-activity-meta').textContent =
-        (payload.activity.date || '') + ' — ' + (payload.activity.duration_min ?? 0).toFixed(0) + ' min, ' + (payload.activity.distance_mi ?? 0).toFixed(1) + ' mi';
+    document.getElementById('detail-activity-meta').textContent = sport === 'strength'
+        ? (payload.activity.date || '') + ' — ' + (payload.activity.duration_min ?? 0).toFixed(0) + ' min'
+        : (payload.activity.date || '') + ' — ' + (payload.activity.duration_min ?? 0).toFixed(0) + ' min, ' + (payload.activity.distance_mi ?? 0).toFixed(1) + ' mi';
+
+    if (sport === 'strength') {
+        document.getElementById('cardio-detail-cards').style.display = 'none';
+        document.getElementById('strength-detail-cards').style.display = '';
+        renderStrengthDetail(payload);
+        return;
+    }
+    document.getElementById('cardio-detail-cards').style.display = '';
+    document.getElementById('strength-detail-cards').style.display = 'none';
 
     const points = payload.points;
     renderDetailMap(points);

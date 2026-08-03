@@ -6,7 +6,13 @@ from garmin.analysis.quality import classify_metric
 from garmin.analysis.trend_gp import fit_gp_trend
 from garmin.analysis.analysis_pipeline import STRENGTH_EXERCISE_CANDIDATES
 from garmin.updaters import ACTIVITY_DATASETS
-from garmin.prototypes.activity_explorer import build_activity_explorer_html
+from garmin.prototypes.activity_explorer import (
+    build_activity_explorer_html,
+    EXERCISE_MUSCLES,
+    format_exercise_label,
+    _front_body_svg,
+    _back_body_svg,
+)
 import numpy as np
 import pandas as pd
 import os
@@ -750,6 +756,129 @@ def _activity_detail_real_payload(sport: str = 'running', activity_id: str | Non
     }
 
 
+def _strength_activity_detail_payload(activity_id: str | None = None, source: str = 'local') -> dict | None:
+    """Per-set detail (exercise, reps, weight, rest between sets) plus a
+    session muscle-load breakdown for one strength_training activity --
+    the strength-tab analog of _activity_detail_real_payload's map/pace/HR
+    view, which doesn't apply here (no GPS/FIT sensor stream for lifting).
+
+    Set-level data comes from ActivityPuller.get_strength_workout via the
+    scheduled updater (curated/activities/detail/strength/, keyed by
+    activity_id directly -- not the "<sport>_timeseries" naming cardio
+    sports use, since this was wired in before that convention existed).
+    Rest time isn't pulled directly; it's derived from consecutive sets'
+    set_start_time/duration_s. Muscle load is volume (reps * weight, or
+    just reps for a bodyweight movement) distributed across each
+    exercise's EXERCISE_MUSCLES activation fractions and summed -- the
+    same model garmin.prototypes.activity_explorer's multi-session view
+    uses, just scoped to one session.
+    """
+    store = curated_s3 if source == 's3' else curated_local
+
+    if activity_id is None:
+        prefix = 'curated/activities/detail/strength/'
+        files = [f for f in store.file_manager.list_files(prefix) if f.endswith('.parquet')]
+        if not files:
+            return None
+        ids = [f.rsplit('activity_id=', 1)[-1].removesuffix('.parquet') for f in files]
+        summary_all = store.load_activity_summary('strength')
+        if not summary_all.empty:
+            candidates = summary_all[summary_all['activity_id'].astype(str).isin(ids)]
+            if not candidates.empty:
+                activity_id = str(candidates.sort_values('date').iloc[-1]['activity_id'])
+        if activity_id is None:
+            activity_id = ids[0]
+
+    detail = store.load_activity_detail('strength', str(activity_id))
+    detail = detail.dropna(subset=['reps'])
+    if detail.empty:
+        return None
+
+    detail = detail.sort_values(['set_index'], na_position='last').reset_index(drop=True)
+    start = pd.to_datetime(detail.get('set_start_time'), errors='coerce')
+    duration = pd.to_numeric(detail.get('duration_s'), errors='coerce')
+
+    rest_s = [None] * len(detail)
+    for i in range(1, len(detail)):
+        if pd.isna(start.iloc[i]) or pd.isna(start.iloc[i - 1]):
+            continue
+        prior_duration = duration.iloc[i - 1] if pd.notnull(duration.iloc[i - 1]) else 0.0
+        prior_end = start.iloc[i - 1] + pd.Timedelta(seconds=float(prior_duration))
+        gap = (start.iloc[i] - prior_end).total_seconds()
+        rest_s[i] = round(gap) if gap > 0 else 0
+
+    muscle_load: dict[str, float] = {}
+    exercise_labels = []
+    for _, row in detail.iterrows():
+        exercise = str(row.get('exercise') or 'unknown')
+        exercise_labels.append(format_exercise_label(exercise))
+        reps = row.get('reps') or 0
+        weight = row.get('weight_lb')
+        volume = float(reps) * float(weight) if pd.notnull(weight) else float(reps)
+        for muscle, fraction in EXERCISE_MUSCLES.get(exercise, {}).items():
+            muscle_load[muscle] = muscle_load.get(muscle, 0.0) + volume * fraction
+
+    sets_df = detail[['exercise', 'reps', 'weight_lb']].copy()
+    sets_df['exercise_label'] = exercise_labels
+    sets_df['rest_s'] = rest_s
+    sets_df['set_number'] = range(1, len(detail) + 1)
+
+    summary = store.load_activity_summary('strength')
+    activity_meta = {'type': 'strength', 'name': None, 'date': None, 'duration_min': None}
+    meta_row = summary[summary['activity_id'].astype(str) == str(activity_id)] if not summary.empty else summary
+    if not meta_row.empty:
+        r = meta_row.iloc[0]
+        activity_meta.update({
+            'name': r.get('name'),
+            'date': pd.Timestamp(r['date']).date().isoformat() if pd.notnull(r.get('date')) else None,
+            'duration_min': float(r['duration_min']) if pd.notnull(r.get('duration_min')) else None,
+        })
+
+    return {
+        'activity': activity_meta,
+        'activity_id': str(activity_id),
+        'sets': _timeseries_records(sets_df),
+        'muscle_load': muscle_load,
+    }
+
+
+def _mock_strength_activity_detail() -> dict:
+    """Synthetic single strength session, shaped like
+    _strength_activity_detail_payload's output, for when no real strength
+    detail has been pulled for this account/environment yet."""
+    rng = np.random.default_rng(11)
+    exercises = ['bench_press', 'squat', 'row', 'curl']
+    rows = []
+    set_number = 1
+    for exercise in exercises:
+        base_weight = {'bench_press': 135.0, 'squat': 185.0, 'row': 95.0, 'curl': 30.0}[exercise]
+        for _ in range(int(rng.integers(3, 5))):
+            rows.append({
+                'exercise': exercise,
+                'exercise_label': format_exercise_label(exercise),
+                'reps': int(rng.integers(6, 11)),
+                'weight_lb': round(base_weight + float(rng.normal(0, 5)), 1),
+                'rest_s': int(rng.integers(60, 150)) if set_number > 1 else None,
+                'set_number': set_number,
+            })
+            set_number += 1
+
+    muscle_load: dict[str, float] = {}
+    for row in rows:
+        volume = row['reps'] * row['weight_lb']
+        for muscle, fraction in EXERCISE_MUSCLES.get(row['exercise'], {}).items():
+            muscle_load[muscle] = muscle_load.get(muscle, 0.0) + volume * fraction
+
+    return {
+        'activity': {
+            'type': 'strength', 'name': 'Example Strength Session (sample data)',
+            'date': pd.Timestamp.today().date().isoformat(), 'duration_min': 52.0,
+        },
+        'sets': rows,
+        'muscle_load': muscle_load,
+    }
+
+
 def _mock_activity_detail() -> dict:
     """A single synthetic cycling activity, for the 'precision dive' drill-in view.
 
@@ -887,7 +1016,13 @@ def api_fitness_data():
 
 @bp.route('/activities')
 def activities():
-    return render_template('activities.html', active_section='activities')
+    # Static (session-independent) muscle-map markup, rendered once here
+    # rather than re-sent on every /api/activity_detail_data response --
+    # the JS colors .muscle-region fills per-session from the JSON payload.
+    return render_template(
+        'activities.html', active_section='activities',
+        front_body_svg=_front_body_svg(), back_body_svg=_back_body_svg(),
+    )
 
 
 @bp.route('/api/activities_overview_data')
@@ -946,10 +1081,16 @@ def api_activity_detail_data():
 
     try:
         is_mock = False
-        payload = _activity_detail_real_payload(sport=sport, activity_id=activity_id, source=source)
-        if payload is None:
-            payload = _mock_activity_detail()
-            is_mock = True
+        if sport == 'strength':
+            payload = _strength_activity_detail_payload(activity_id=activity_id, source=source)
+            if payload is None:
+                payload = _mock_strength_activity_detail()
+                is_mock = True
+        else:
+            payload = _activity_detail_real_payload(sport=sport, activity_id=activity_id, source=source)
+            if payload is None:
+                payload = _mock_activity_detail()
+                is_mock = True
         payload['mock'] = is_mock
         return jsonify(payload)
     except Exception as e:

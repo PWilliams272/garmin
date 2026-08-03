@@ -381,6 +381,78 @@ def test_activity_detail_real_payload_returns_none_without_data(tmp_path, monkey
     assert routes_module._activity_detail_real_payload(sport='running', source='local') is None
 
 
+def _seed_strength_detail(store, activity_id: str, date: str) -> None:
+    store.merge_activity_summary('strength', pd.DataFrame([
+        {'activity_id': activity_id, 'date': date, 'name': 'Test Lift', 'duration_min': 45.0},
+    ]))
+    store.write_activity_detail('strength', activity_id, pd.DataFrame([
+        {'exercise': 'bench_press', 'reps': 8, 'weight_lb': 135.0,
+         'duration_s': 40.0, 'set_start_time': f'{date}T18:00:00.0', 'set_index': 0},
+        {'exercise': 'bench_press', 'reps': 6, 'weight_lb': 155.0,
+         'duration_s': 35.0, 'set_start_time': f'{date}T18:02:15.0', 'set_index': 1},
+        {'exercise': 'squat', 'reps': 5, 'weight_lb': 185.0,
+         'duration_s': 50.0, 'set_start_time': f'{date}T18:10:00.0', 'set_index': 2},
+    ]))
+
+
+def test_strength_activity_detail_payload_computes_rest_and_muscle_load(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
+    store = routes_module.curated_local
+    _seed_strength_detail(store, '555', '2024-03-01')
+
+    payload = routes_module._strength_activity_detail_payload(source='local')
+
+    assert payload is not None
+    assert payload['activity_id'] == '555'
+    assert payload['activity']['name'] == 'Test Lift'
+    assert len(payload['sets']) == 3
+    # First set has no prior set, so no rest is computed.
+    assert payload['sets'][0]['rest_s'] is None
+    # Second set starts 18:02:15, first set (18:00:00 + 40s duration) ends
+    # 18:00:40 -> 95s rest.
+    assert payload['sets'][1]['rest_s'] == 95
+    assert payload['sets'][1]['exercise_label'] == 'Bench Press'
+    # chest gets contributions from both bench_press sets (EXERCISE_MUSCLES
+    # chest fraction 1.0): (8*135 + 6*155)*1.0 = 2010.0
+    assert payload['muscle_load']['chest'] == 2010.0
+    # squat contributes to quads (fraction 0.95): 5*185*0.95 = 878.75
+    assert payload['muscle_load']['quads'] == 878.75
+
+
+def test_strength_activity_detail_payload_returns_none_without_data(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
+
+    assert routes_module._strength_activity_detail_payload(source='local') is None
+
+
+def test_activity_detail_data_route_strength_uses_strength_payload(tmp_path, monkeypatch) -> None:
+    app = create_app()
+    monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
+    _seed_strength_detail(routes_module.curated_local, '555', '2024-03-01')
+
+    with app.test_client() as client:
+        response = client.get('/api/activity_detail_data?sport=strength')
+
+    payload = response.get_json()
+    assert payload['mock'] is False
+    assert payload['activity_id'] == '555'
+    assert len(payload['sets']) == 3
+    assert 'points' not in payload
+
+
+def test_activity_detail_data_route_strength_falls_back_to_mock(tmp_path, monkeypatch) -> None:
+    app = create_app()
+    monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
+
+    with app.test_client() as client:
+        response = client.get('/api/activity_detail_data?sport=strength')
+
+    payload = response.get_json()
+    assert payload['mock'] is True
+    assert len(payload['sets']) > 0
+    assert payload['muscle_load']
+
+
 def test_activity_detail_data_route_falls_back_to_mock(monkeypatch) -> None:
     app = create_app()
     monkeypatch.setattr(routes_module, '_activity_detail_real_payload', lambda sport='running', activity_id=None, source='local': None)
