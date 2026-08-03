@@ -288,11 +288,30 @@ function applyFiltersAndRenderList() {
     }
 }
 
+// Bumped on every selection so a slow response for a since-abandoned
+// activity can't clobber the DOM after a newer selection already rendered
+// (e.g. clicking two activities in quick succession).
+let detailLoadToken = 0;
+
+function showDetailLoading(activity) {
+    document.getElementById('detail-activity-name').textContent = (activity && (activity.name || typeLabel(activity.type))) || 'Loading…';
+    document.getElementById('detail-activity-meta').textContent = '';
+    document.getElementById('detail-mock-badge').style.display = 'none';
+    document.getElementById('detail-status-line').textContent = 'Loading…';
+    // Clear both panes immediately rather than leaving the previously
+    // selected activity's charts/table on screen while the new one fetches
+    // -- a click should read as having taken effect right away.
+    document.getElementById('cardio-detail-cards').style.display = 'none';
+    document.getElementById('strength-detail-cards').style.display = 'none';
+}
+
 function selectActivity(activityId, type) {
     state.selectedId = activityId;
     state.selectedType = type;
     applyFiltersAndRenderList();
-    loadDetail(type, activityId).catch((error) => console.error('Failed to load activity detail', error));
+    showDetailLoading(state.activities.find((a) => a.activity_id === activityId));
+    const myLoadToken = ++detailLoadToken;
+    loadDetail(type, activityId, myLoadToken).catch((error) => console.error('Failed to load activity detail', error));
 }
 
 async function loadActivities() {
@@ -444,12 +463,16 @@ function renderStrengthDetail(payload) {
     }
 }
 
-async function loadDetail(sport, activityId) {
+async function loadDetail(sport, activityId, loadToken) {
     sport = sport || 'running';
     let url = '/api/activity_detail_data?sport=' + encodeURIComponent(sport);
     if (activityId) url += '&activity_id=' + encodeURIComponent(activityId);
     const response = await fetch(url);
     const payload = await response.json();
+    // A newer selection already started loading (or finished) while this
+    // fetch was in flight -- drop this response rather than render a
+    // now-stale activity's data over whatever the user clicked next.
+    if (loadToken !== undefined && loadToken !== detailLoadToken) return;
     if (payload.error) throw new Error(payload.error);
     setMockStatus(
         'detail-mock-badge', 'detail-status-line', payload.mock,
