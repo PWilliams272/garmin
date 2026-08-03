@@ -45,8 +45,20 @@ def build_viewer_cache(storage_target: str) -> None:
         (f'data_status_{source}', lambda: app_routes._data_status_payload(source=source)),
     ]
 
+    # Each job is independent -- one dataset's transient failure (e.g. a
+    # dropped connection partway through activity_explorer's 490+ individual
+    # S3 reads for per-set strength detail, seen in practice 2026-08-03)
+    # shouldn't abort every other page's rebuild. Failures are collected and
+    # reported at the end rather than swallowed, so a cron/Lambda-scheduled
+    # run still surfaces the problem in its logs.
+    failures: list[str] = []
     for cache_name, build_fn in jobs:
-        payload = build_fn()
+        try:
+            payload = build_fn()
+        except Exception as exc:
+            print(f"FAILED {cache_name}: {exc!r}")
+            failures.append(cache_name)
+            continue
         if payload is None:
             print(f"Skipped {cache_name}: no data to cache yet.")
             continue
@@ -60,9 +72,17 @@ def build_viewer_cache(storage_target: str) -> None:
         (f'activity_explorer_{source}', lambda: build_activity_explorer_html(store)),
     ]
     for cache_name, build_fn in html_jobs:
-        html = build_fn()
+        try:
+            html = build_fn()
+        except Exception as exc:
+            print(f"FAILED {cache_name}: {exc!r}")
+            failures.append(cache_name)
+            continue
         store.write_viewer_cache_html(cache_name, html)
         print(f"Wrote viewer_cache/{cache_name}.html.")
+
+    if failures:
+        raise RuntimeError(f"viewer cache build had {len(failures)} failure(s): {', '.join(failures)}")
 
 
 def build_parser() -> argparse.ArgumentParser:
