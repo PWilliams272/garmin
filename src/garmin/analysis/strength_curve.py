@@ -301,6 +301,7 @@ def _build_design(
     session_dates: list[pd.DatetimeIndex] = []
     knot_counts: list[int] = []
     rep_sds: list[float] = []
+    log_centers: list[float] = []
     offsets: list[int] = []
     session_interp: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
     log_w: list[np.ndarray] = []
@@ -331,6 +332,7 @@ def _build_design(
         session_interp.append(_knot_interpolation(dates, origin, n_knots))
 
         rep_sds.append(float(df["reps"].std()))
+        log_centers.append(float(np.log(df["reps"].to_numpy(dtype=float)).mean()))
         set_dates = pd.DatetimeIndex(df["date"])
         lower, upper, weight = _knot_interpolation(set_dates, origin, n_knots)
         log_w.append(np.log(df["weight_lb"].to_numpy(dtype=float)))
@@ -357,6 +359,10 @@ def _build_design(
         "session_interp": session_interp,
         "knot_counts": knot_counts,
         "rep_sds": np.array(rep_sds),
+        # Mean log(reps) per exercise. The level is defined *at* this rep
+        # count rather than at one rep, which is what decorrelates it from
+        # the rep-decay exponent -- see the centering note in the model.
+        "log_centers": np.array(log_centers),
         "offsets": offsets,
         "n_alpha": offset,
     }, exercises
@@ -563,6 +569,8 @@ def fit_strength_curves(
             pm.GaussianRandomWalk(
                 f"alpha_{e}",
                 sigma=sigma_walk,
+                # Centred, this is log of a typical working weight rather
+                # than of an extrapolated one-rep max.
                 init_dist=pm.Normal.dist(np.log(100.0), 2.0),
                 shape=design["knot_counts"][e],
             )
@@ -573,9 +581,23 @@ def fit_strength_curves(
         # Linear interpolation between the two surrounding knots.
         w = design["obs_weight"]
         level = (1.0 - w) * alpha[design["obs_lower"]] + w * alpha[design["obs_upper"]]
-        # The capacity frontier: what this exercise could lift at this rep
-        # count on this date, if the set were taken to the limit.
-        mu = level - beta[design["ex_idx"]] * design["log_r"]
+        # Centre log(reps) on each exercise's own mean before applying the
+        # rep decay.
+        #
+        # This is the single most consequential line in the model. Written as
+        # `level - beta*log(r)`, the level means "capacity at one rep" -- but
+        # log(reps) here has mean 2.18 and sd 0.25, so that intercept sits 2.18
+        # log units outside the data and is pinned to beta with a correlation
+        # of -0.993. Any move in beta is paid for by an equal move in the
+        # level, which is a ridge rather than a peak, and chains slide along it
+        # instead of mixing: measured at r-hat 1.50 with an effective sample
+        # size of 8 for the shared exponent.
+        #
+        # Centred, the level means "capacity at the rep count actually
+        # trained", which is directly observed and near-orthogonal to beta.
+        centers = pt.as_tensor_variable(design["log_centers"])
+        centered_log_r = design["log_r"] - centers[design["ex_idx"]]
+        mu = level - beta[design["ex_idx"]] * centered_log_r
 
         if likelihood == LIKELIHOOD_FRONTIER:
             # How far below capacity a set sits is modelled, not assumed. The
@@ -664,11 +686,14 @@ def _summarize(
             (1.0 - weight) * alpha[:, lower + offset] + weight * alpha[:, upper + offset]
         )
 
+        center = design["log_centers"][e]
         frame = pd.DataFrame({"date": dates})
         for target in rep_targets:
-            # eXRM = exp(alpha - beta * log(X)); X=1 makes log(X)=0, so the
-            # 1RM column is just exp(alpha) -- the extrapolated intercept.
-            draws_x = np.exp(block - beta[:, [e]] * np.log(float(target)))
+            # The level is capacity at `center` reps, so the rep decay is
+            # applied relative to that rather than to a one-rep intercept.
+            # e1RM is still available and still an extrapolation -- it just is
+            # not what the model is parameterised around any more.
+            draws_x = np.exp(block - beta[:, [e]] * (np.log(float(target)) - center))
             frame[f"e{target}rm_mean"] = draws_x.mean(axis=0)
             for label, (lo, hi) in {"68": (16, 84), "95": (2.5, 97.5)}.items():
                 frame[f"e{target}rm_lower_{label}"] = np.percentile(draws_x, lo, axis=0)
