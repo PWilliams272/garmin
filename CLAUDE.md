@@ -45,9 +45,3 @@ Full setup, env vars, and update/backfill commands: see `README.md`.
 - `GARMIN_HANDOFF.md` — AWS resource names, CLI profiles, verified live state.
 - `GAME_PLAN.md` — current multi-goal roadmap (cleanup → activities data → Plotly migration → standalone deploy → predictive analysis).
 - `WEB_APP_SETUP.md` — deploy spec for the future `garmin.peterwilliams.dev` standalone app (not started yet).
-
-## Coordination With `system-overview`
-
-- `system-overview` (`/Users/peterwilliams/projects/system-overview`) is the cross-repo coordination hub — its docs (`repo-inventory.md`, `system-overview.md`, `AGENT_HANDOFF.md`) are the source of truth for how this repo fits into the overall workspace (deploy targets, ports, IAM, integration mode, priorities).
-- After any change here with cross-repo relevance — new deploy target, new port/subdomain, new AWS resource, new integration mode, a significant scope or status change — report it back so `system-overview` can be updated. If you can, make the edit directly in the relevant `system-overview` doc(s); otherwise leave the user a short note of what changed so they can relay it.
-- Before starting work that could plausibly conflict with what `system-overview` has documented for this repo (a different port/subdomain than assigned, a new instance profile instead of extending the shared role, a deploy pattern that diverges from the established `kaya` pattern, etc.), flag it and tell the user to check with the `system-overview` agent before proceeding, rather than assuming and continuing.
