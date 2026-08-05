@@ -22,8 +22,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="local",
         help="Where curated strength inputs are read from and curve outputs are written.",
     )
-    parser.add_argument("--draws", type=int, default=1000, help="Posterior draws per chain.")
-    parser.add_argument("--tune", type=int, default=1000, help="Tuning (warmup) steps per chain.")
+    parser.add_argument("--draws", type=int, default=1500, help="Posterior draws per chain.")
+    parser.add_argument(
+        "--tune", type=int, default=2500,
+        help="Tuning (warmup) steps per chain. Below ~2500 this model's random-walk "
+        "geometry doesn't mix -- see strength_curve.fit_strength_curves' tune default.",
+    )
     parser.add_argument("--chains", type=int, default=2, help="Number of MCMC chains.")
     parser.add_argument(
         "--progress", action="store_true",
