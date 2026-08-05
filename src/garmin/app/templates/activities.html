@@ -46,7 +46,7 @@
         </div>
 
         <div id="cardio-detail-cards">
-            <div class="card chart-card">
+            <div class="card chart-card" id="detail-map-card">
                 <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
                     <select id="basemap-select" class="ghost-button" style="margin-left: auto;">
                         <option value="carto-positron">Basemap: Light</option>
@@ -58,56 +58,65 @@
                 <div class="chart-host" id="detail-map" style="min-height: 320px;"></div>
                 <div class="status-line" id="detail-map-note" style="margin-top: 6px;"></div>
             </div>
-            <div class="card chart-card">
+            <div class="card chart-card" id="detail-pace-card">
                 <div class="section-heading">Pace</div>
                 <div class="chart-host" id="detail-pace-chart"></div>
             </div>
-            <div class="card chart-card">
+            <div class="card chart-card" id="detail-hr-card">
                 <div class="section-heading">Heart Rate</div>
                 <div class="chart-host" id="detail-hr-chart"></div>
             </div>
-            <div class="card chart-card">
+            <div class="card chart-card" id="detail-cadence-card">
                 <div class="section-heading">Cadence</div>
                 <div class="chart-host" id="detail-cadence-chart"></div>
             </div>
-            <div class="card chart-card">
+            <div class="card chart-card" id="detail-power-card">
                 <div class="section-heading">Power</div>
                 <div class="chart-host" id="detail-power-chart"></div>
             </div>
-            <div class="card chart-card">
+            <div class="card chart-card" id="detail-zones-card">
                 <div class="section-heading">Time in Heart Rate Zone</div>
                 <div class="chart-host" id="detail-zones-chart"></div>
             </div>
         </div>
 
-        <div id="strength-detail-cards" style="display: none;">
-            <div class="card chart-card">
+        <div id="strength-timeline-card" class="card chart-card" style="display: none;">
+            <div class="section-heading" style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+                <span>Session Timeline</span>
+                <label class="timeline-height-control">
+                    Height
+                    <input type="range" id="timeline-height" min="240" max="760" step="20">
+                    <output id="timeline-height-out"></output>
+                </label>
+            </div>
+            <div class="status-line" style="margin-bottom: 8px;">
+                Five strips on one clock. Each shaded band is an active set, coloured by exercise;
+                the gaps between them are rest. Heart rate breaks over rest because Garmin records none
+                between sets. <b>Intensity</b> is the estimated 1RM that set demonstrated, as a share of
+                your best known 1RM for that exercise &mdash; rep-adjusted, so a hard high-rep set reads
+                as hard. <b>Fatigue</b> is a decaying sum of work done so far
+                (<a href="/modeling#model">a heuristic, not a fitted result</a>).
+            </div>
+            <div class="chart-host" id="strength-timeline-chart" style="min-height: 300px;"></div>
+        </div>
+
+        <div id="strength-detail-cards" class="strength-detail-grid" style="display: none;">
+            <div class="card chart-card strength-sets-card">
+                <div class="section-heading">Sets</div>
+                <div class="status-line" style="margin-bottom: 4px;">1RM is a rough estimate from that set's weight/reps alone -- treat warmups and high-rep sets as noisier. Click a set to see the exercise guess, review status, and HR.</div>
+                <div class="status-line" id="strength-reviewed-note" style="margin-bottom: 6px; color: var(--lg-success);"></div>
+                <div id="strength-sets-list" class="strength-sets-list-scroll"></div>
+            </div>
+            <div class="card chart-card strength-map-card">
                 <div class="section-heading">Muscles Worked</div>
-                <div class="status-line" style="margin-bottom: 10px;">Shading is relative load (reps &times; weight) this session put on each muscle group.</div>
+                <div class="status-line" style="margin-bottom: 10px;">Shading is relative load (reps &times; weight) this session put on each muscle group. Hover a set to highlight its muscles.</div>
                 <div class="muscle-map-wrap">
                     <div class="figure-card">{{ front_body_svg|safe }}</div>
                     <div class="figure-card">{{ back_body_svg|safe }}</div>
                 </div>
                 <div style="display: flex; gap: 16px; align-items: center; margin-top: 10px; font-size: var(--fs-sm); color: var(--lg-text-2);">
-                    <span><span class="status-swatch" style="background: var(--lg-highlight); opacity: 0.25;"></span> lower load</span>
-                    <span><span class="status-swatch" style="background: var(--lg-highlight); opacity: 0.9;"></span> higher load</span>
-                </div>
-            </div>
-            <div class="card chart-card">
-                <div class="section-heading">Sets</div>
-                <div class="table-scroll">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>#</th>
-                                <th>Exercise</th>
-                                <th class="num">Reps</th>
-                                <th class="num">Weight</th>
-                                <th class="num">Rest Before</th>
-                            </tr>
-                        </thead>
-                        <tbody id="strength-sets-body"></tbody>
-                    </table>
+                    <span><span class="status-swatch" style="background: var(--lg-gold); opacity: 0.25;"></span> lower load</span>
+                    <span><span class="status-swatch" style="background: var(--lg-gold); opacity: 0.9;"></span> higher load</span>
                 </div>
             </div>
         </div>
@@ -126,13 +135,15 @@
 .muscle-map-wrap {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 12px;
+    gap: 10px;
+    max-width: 320px;
+    margin: 0 auto;
 }
 .figure-card {
     border: 1px solid var(--lg-border);
     border-radius: var(--lg-radius-lg);
     background: var(--lg-bg);
-    padding: 8px;
+    padding: 6px;
 }
 .figure-card svg {
     width: 100%;
@@ -148,19 +159,158 @@
     fill: var(--lg-active);
     stroke: var(--lg-border-h);
     stroke-width: 1;
+    transition: stroke 100ms ease, stroke-width 100ms ease;
 }
-.body-label {
-    font-size: 10px;
-    fill: var(--lg-text-2);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+.muscle-region.highlighted {
+    stroke: var(--lg-text);
+    stroke-width: 2.5;
 }
+
+.strength-detail-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.3fr) minmax(260px, 1fr);
+    gap: var(--lg-gap);
+    align-items: start;
+}
+@media (max-width: 900px) {
+    .strength-detail-grid {
+        grid-template-columns: 1fr;
+    }
+}
+.strength-sets-list-scroll {
+    max-height: 640px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+.group-tile {
+    border: 1px solid var(--lg-border);
+    border-radius: var(--lg-radius-lg);
+    margin-bottom: 8px;
+    transition: background 100ms ease, border-color 100ms ease;
+}
+.group-tile:hover,
+.group-tile.is-hovered-from-map {
+    border-color: var(--lg-border-h);
+}
+.group-tile-header {
+    padding: 10px 12px;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    cursor: pointer;
+}
+.group-tile-header:hover {
+    background: var(--lg-active);
+}
+.pr-badge {
+    margin-left: auto;
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    padding: 2px 7px;
+    border: 1px solid;
+    border-radius: 999px;
+    white-space: nowrap;
+}
+.group-tile-caret {
+    color: var(--lg-text-3);
+    transition: transform 120ms ease;
+}
+.group-tile.is-expanded .group-tile-caret {
+    transform: rotate(90deg);
+}
+.group-tile-body {
+    padding: 4px 10px 10px;
+    border-top: 1px solid var(--lg-border);
+}
+
+.set-tile {
+    border: 1px solid var(--lg-border);
+    border-radius: var(--lg-radius-lg);
+    padding: 8px 10px;
+    margin-top: 6px;
+    cursor: pointer;
+    transition: background 100ms ease, border-color 100ms ease;
+}
+.set-tile:hover,
+.set-tile.is-hovered-from-map {
+    background: var(--lg-active);
+    border-color: var(--lg-border-h);
+}
+.set-tile-main {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.set-tile-number {
+    font-weight: 600;
+    color: var(--lg-text-2);
+    font-variant-numeric: tabular-nums;
+    min-width: 1.4em;
+}
+.set-tile-exercise {
+    font-weight: 600;
+}
+.set-tile-stats {
+    font-size: var(--fs-sm);
+    color: var(--lg-text-2);
+    font-variant-numeric: tabular-nums;
+}
+.set-tile-candidates {
+    font-size: var(--fs-xs);
+    color: var(--lg-text-3);
+    margin-top: 4px;
+}
+.set-tile-detail {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px dashed var(--lg-border);
+}
+.set-tile-sparkline {
+    margin-left: auto;
+    opacity: 0.85;
+}
+.set-tile-hr-detail {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+}
+.hr-sparkline {
+    display: block;
+    flex-shrink: 0;
+}
+.rest-connector {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 0 2px 20px;
+    font-size: var(--fs-xs);
+    color: var(--lg-text-3);
+}
+.rest-connector-line {
+    width: 1px;
+    height: 14px;
+    background: var(--lg-border);
+}
+.timeline-height-control {
+    display: flex; align-items: center; gap: 8px;
+    font-size: var(--fs-xs); font-weight: 400; text-transform: none;
+    letter-spacing: 0; color: var(--lg-text-3);
+}
+.timeline-height-control input[type=range] { width: 110px; accent-color: var(--lg-gold); }
+.timeline-height-control output { font-variant-numeric: tabular-nums; min-width: 40px; }
 </style>
 
 <script>
-function token(name) {
-    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-}
+// Several design tokens are declared as color-mix(...) expressions, and
+// getPropertyValue returns that raw string rather than a computed colour.
+// Plotly can't parse it and silently drops whatever used it -- that is how
+// the separator rules between timeline strips ended up invisible. Resolving
+// through a throwaway element forces the browser to compute a real rgb().
+// token() is defined once in static/js/tokens.js -- it resolves color-mix()
+// tokens that getPropertyValue would otherwise return unparsed.
 
 function baseLayout(yTitle, extra) {
     return Object.assign({
@@ -204,6 +354,8 @@ const state = {
     selectedId: null,
     selectedType: null,
     detailPoints: null,
+    // Kept so the timeline height slider can re-lay out without refetching.
+    lastStrengthPayload: null,
 };
 
 function formatActivityWhen(activity) {
@@ -229,6 +381,7 @@ function buildActivityListItem(activity) {
         <div class="activity-list-item-meta"><span>${typeLabel(activity.type)}</span><span>${formatActivityWhen(activity)}</span></div>
         <div class="activity-list-item-meta"><span>${statLine}</span></div>
     `;
+    el.dataset.activityId = String(activity.activity_id);
     el.addEventListener('click', () => selectActivity(activity.activity_id, activity.type));
     return el;
 }
@@ -303,6 +456,7 @@ function showDetailLoading(activity) {
     // -- a click should read as having taken effect right away.
     document.getElementById('cardio-detail-cards').style.display = 'none';
     document.getElementById('strength-detail-cards').style.display = 'none';
+    document.getElementById('strength-timeline-card').style.display = 'none';
 }
 
 function selectActivity(activityId, type) {
@@ -335,7 +489,18 @@ async function loadActivities() {
     applyFiltersAndRenderList();
 
     if (payload.activities.length) {
-        selectActivity(payload.activities[0].activity_id, payload.activities[0].type);
+        // Deep link: /activities?activity_id=... opens straight to that
+        // session, so a point on a progression chart can link to the workout
+        // behind it. Falls back to the most recent activity.
+        const wanted = new URLSearchParams(window.location.search).get('activity_id');
+        const match = wanted
+            && payload.activities.find(a => String(a.activity_id) === String(wanted));
+        const target = match || payload.activities[0];
+        selectActivity(target.activity_id, target.type);
+        if (match) {
+            const row = document.querySelector(`[data-activity-id="${CSS.escape(String(wanted))}"]`);
+            if (row && row.scrollIntoView) row.scrollIntoView({ block: 'center' });
+        }
     }
 }
 
@@ -434,32 +599,370 @@ document.getElementById('basemap-select').addEventListener('change', () => {
     if (state.detailPoints) renderDetailMap(state.detailPoints);
 });
 
+function formatRestDuration(restS) {
+    if (restS === null || restS === undefined) return null;
+    return Math.floor(restS / 60) + ':' + String(Math.round(restS % 60)).padStart(2, '0');
+}
+
+function highlightMuscles(muscles, on) {
+    (muscles || []).forEach((muscle) => {
+        document.querySelectorAll(`.muscle-region[data-muscle="${muscle}"]`).forEach((el) => {
+            el.classList.toggle('highlighted', on);
+        });
+    });
+}
+
+function groupConsecutiveSets(sets) {
+    const groups = [];
+    sets.forEach((set) => {
+        const last = groups[groups.length - 1];
+        if (last && last.exercise === set.exercise) {
+            last.sets.push(set);
+        } else {
+            groups.push({ exercise: set.exercise, exercise_label: set.exercise_label, sets: [set] });
+        }
+    });
+    return groups.map((g) => {
+        const oneRms = g.sets.map((s) => s.one_rm_lb).filter((v) => v !== null && v !== undefined);
+        return {
+            ...g,
+            setCount: g.sets.length,
+            totalReps: g.sets.reduce((sum, s) => sum + (s.reps || 0), 0),
+            maxOneRm: oneRms.length ? Math.max(...oneRms) : null,
+            anyReviewed: g.sets.some((s) => s.manually_reviewed),
+            muscles: g.sets[0].muscles,
+        };
+    });
+}
+
+function sparklineSvg(hrSeries, width, height) {
+    // Hand-rolled instead of a Plotly chart on purpose -- this needs to be
+    // cheap enough to render inline on every collapsed set tile (a group
+    // can have a dozen+ sets), and it's just a shape: no axes, no
+    // interactivity, no per-chart Plotly instance overhead.
+    if (!hrSeries || !hrSeries.bpm || hrSeries.bpm.length < 2) return '';
+    const values = hrSeries.bpm;
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const range = max - min || 1;
+    const points = values.map((v, i) => {
+        const x = (i / (values.length - 1)) * width;
+        const y = height - ((v - min) / range) * (height - 2) - 1;
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+    return `<svg class="hr-sparkline" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" preserveAspectRatio="none">` +
+        `<polyline points="${points}" fill="none" stroke="${token('--lg-danger')}" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>`;
+}
+
+function buildSetDetail(set) {
+    const detail = document.createElement('div');
+    detail.className = 'set-tile-detail';
+    const candidatesLine = (set.candidates || [])
+        .map((c) => `${c.exercise}${c.probability !== null ? ' (' + Math.round(c.probability) + '%)' : ''}`)
+        .join(', ');
+    const sparkline = sparklineSvg(set.hr_series, 160, 32);
+    detail.innerHTML = `
+        ${set.exercise_name ? `<div class="set-tile-candidates">Movement: ${typeLabel(set.exercise_name.toLowerCase())}</div>` : ''}
+        <div class="set-tile-candidates">${set.manually_reviewed ? 'Manually reviewed/corrected in Garmin Connect' : 'Guesses: ' + (candidatesLine || '—')}</div>
+        ${sparkline ? `<div class="set-tile-hr-detail">${sparkline}<span class="set-tile-candidates">HR during set</span></div>` : ''}
+    `;
+    return detail;
+}
+
+function buildSetTile(set) {
+    const tile = document.createElement('div');
+    tile.className = 'set-tile';
+    tile.id = 'set-tile-' + set.set_number;
+    const weight = set.weight_lb === null || set.weight_lb === undefined ? null : set.weight_lb.toFixed(1) + ' lb';
+    const oneRm = set.one_rm_lb === null || set.one_rm_lb === undefined ? null : '~' + Math.round(set.one_rm_lb) + ' lb 1RM';
+    const hr = set.hr_avg === null || set.hr_avg === undefined ? null : Math.round(set.hr_avg) + ' bpm avg';
+    const statLine = [set.reps !== null && set.reps !== undefined ? set.reps + ' reps' : null, weight, oneRm, hr].filter(Boolean).join(' · ');
+    const sparkline = sparklineSvg(set.hr_series, 40, 16);
+    const main = document.createElement('div');
+    main.className = 'set-tile-main';
+    main.innerHTML = `
+        <span class="set-tile-number">#${set.set_number}</span>
+        <span class="set-tile-stats">${statLine}</span>
+        ${sparkline ? `<span class="set-tile-sparkline">${sparkline}</span>` : ''}
+    `;
+    tile.appendChild(main);
+    tile.addEventListener('mouseenter', () => highlightMuscles(set.muscles, true));
+    tile.addEventListener('mouseleave', () => highlightMuscles(set.muscles, false));
+    main.addEventListener('click', (evt) => {
+        evt.stopPropagation();
+        const isOpen = tile.classList.toggle('is-expanded');
+        const existing = tile.querySelector('.set-tile-detail');
+        if (isOpen && !existing) {
+            tile.appendChild(buildSetDetail(set));
+        } else if (!isOpen && existing) {
+            existing.remove();
+        }
+    });
+    return tile;
+}
+
+function buildPrBadge(prContext, groupMaxOneRm) {
+    if (!prContext || groupMaxOneRm === null || groupMaxOneRm === undefined) return '';
+    // Compare *this group's own* best 1RM against the reference values --
+    // the backend's pct_of_prior_best/pct_of_trend describe the whole
+    // session's best for this exercise, which reads wrong on a group that
+    // isn't that session-best block (e.g. a lighter finishing set of the
+    // same exercise done earlier or later in the same session).
+    const reference = prContext.prior_best_1rm ?? prContext.trend_1rm;
+    if (reference === null || reference === undefined) return '';
+    const basis = prContext.prior_best_1rm !== null && prContext.prior_best_1rm !== undefined ? 'PR' : 'trend';
+    const pct = Math.round(groupMaxOneRm / reference * 100);
+    let label, color;
+    if (pct >= 100) { label = basis === 'PR' ? 'New PR' : `${pct}% of trend`; color = '--lg-success'; }
+    else if (pct >= 85) { label = `${pct}% of ${basis}`; color = '--lg-gold'; }
+    else if (pct >= 60) { label = `${pct}% of ${basis}`; color = '--lg-text-2'; }
+    else { label = `${pct}% of ${basis} (light day?)`; color = '--lg-warning'; }
+    const daysNote = prContext.days_since_last_session !== null && prContext.days_since_last_session !== undefined
+        ? ` · ${prContext.days_since_last_session}d since last` : '';
+    return `<span class="pr-badge" style="color: ${token(color)}; border-color: ${token(color)};" title="Prior best: ${prContext.prior_best_1rm ?? '—'} lb · Trend: ${prContext.trend_1rm ?? '—'} lb${daysNote}">${label}</span>`;
+}
+
+// Stable colour per exercise within a session, so a band, its label and any
+// other reference to that exercise agree.
+const TIMELINE_PALETTE = ['--lg-gold', '--lg-highlight', '--lg-success', '--lg-danger', '--lg-info', '--lg-warning'];
+function sessionExerciseColors(sets) {
+    const order = [...new Set(sets.map(s => s.exercise).filter(Boolean))];
+    const map = {};
+    order.forEach((ex, i) => { map[ex] = token(TIMELINE_PALETTE[i % TIMELINE_PALETTE.length]); });
+    return map;
+}
+
+const TIMELINE_H_KEY = 'garmin.activities.timelineHeight';
+const TIMELINE_H_DEFAULT = 360;
+
+function timelineHeight() {
+    const el = document.getElementById('timeline-height');
+    return el && el.value ? +el.value : TIMELINE_H_DEFAULT;
+}
+
+function initTimelineHeight() {
+    const el = document.getElementById('timeline-height');
+    if (!el || el.dataset.bound) return;
+    let stored = null;
+    try { stored = localStorage.getItem(TIMELINE_H_KEY); } catch (e) { /* private mode */ }
+    el.value = stored || TIMELINE_H_DEFAULT;
+    document.getElementById('timeline-height-out').textContent = el.value + 'px';
+    el.addEventListener('input', () => {
+        document.getElementById('timeline-height-out').textContent = el.value + 'px';
+        try { localStorage.setItem(TIMELINE_H_KEY, el.value); } catch (e) { /* private mode */ }
+        // Re-lay out from the payload already in hand rather than refetching.
+        if (state.lastStrengthPayload) renderSessionTimeline(state.lastStrengthPayload);
+    });
+    el.dataset.bound = '1';
+}
+
+function renderSessionTimeline(payload) {
+    state.lastStrengthPayload = payload;
+    initTimelineHeight();
+    const card = document.getElementById('strength-timeline-card');
+    const sets = (payload.sets || []).filter(s => s.t_start_s !== null && s.t_start_s !== undefined);
+    if (!sets.length) { card.style.display = 'none'; return; }
+    card.style.display = '';
+
+    const colors = sessionExerciseColors(sets);
+    const min = (s) => s / 60;
+    const mid = (s) => min((s.t_start_s + (s.t_end_s ?? s.t_start_s)) / 2);
+
+    // Four stacked panels on one shared time axis. Reps, weight and %1RM get
+    // their own strip with the value printed on the point, so the numbers are
+    // readable at a glance instead of only on hover. Garmin records no heart
+    // rate between sets, so the HR line is broken over rest rather than
+    // drawing a straight segment across a gap with no data behind it.
+    const hx = [], hy = [];
+    sets.forEach((s) => {
+        if (!s.hr_abs || !s.hr_abs.t.length) return;
+        s.hr_abs.t.forEach((t, i) => { hx.push(min(t)); hy.push(s.hr_abs.bpm[i]); });
+        hx.push(null); hy.push(null);
+    });
+
+    const setColor = (s) => colors[s.exercise] || token('--lg-gold');
+    const strip = (yaxis, key, fmt, color) => ({
+        type: 'scatter', mode: 'markers+text', xaxis: 'x', yaxis,
+        x: sets.map(mid), y: sets.map(s => s[key]),
+        marker: { size: 7, color: sets.map(setColor), line: { width: 0 } },
+        text: sets.map(s => (s[key] === null || s[key] === undefined ? '' : fmt(s[key]))),
+        textposition: 'top center', textfont: { size: 8.5, color: token('--lg-text-2') },
+        showlegend: false, hoverinfo: 'skip', cliponaxis: false,
+    });
+
+    // Shapes span the whole figure (yref paper) so one band marks the set
+    // across all four panels at once.
+    const shapes = sets.filter(s => s.t_end_s).map(s => ({
+        type: 'rect', xref: 'x', yref: 'paper',
+        x0: min(s.t_start_s), x1: min(s.t_end_s), y0: 0, y1: 1,
+        fillcolor: setColor(s), opacity: 0.13, line: { width: 0 }, layer: 'below',
+    }));
+
+    const legendTraces = Object.entries(colors).map(([ex, color]) => ({
+        type: 'scatter', mode: 'markers', x: [null], y: [null], xaxis: 'x', yaxis: 'y',
+        marker: { size: 10, color, symbol: 'square' },
+        name: (sets.find(s => s.exercise === ex) || {}).exercise_label || ex,
+        showlegend: true, hoverinfo: 'skip',
+    }));
+
+    // Tight per-panel ranges -- these are narrow-band quantities and a padded
+    // axis wastes most of the height.
+    // Labels are drawn above their marker, so the top of each strip needs
+    // more room than the bottom or the highest value (a 100% intensity set,
+    // the heaviest weight) gets clipped against the panel edge.
+    const span = (vals, pad, topPad) => {
+        const v = vals.filter(x => x !== null && x !== undefined && isFinite(x));
+        if (!v.length) return undefined;
+        const lo = Math.min(...v), hi = Math.max(...v);
+        const range = (hi - lo) || Math.abs(hi) || 1;
+        return [lo - Math.max(range * pad, 1), hi + Math.max(range * (topPad ?? pad * 2.2), 2)];
+    };
+    const axisBase = { gridcolor: token('--lg-border'), zeroline: false };
+    const title = (t) => ({ text: t, font: { size: 10 } });
+
+    const fc = payload.fatigue_curve;
+    const traces = [
+        { x: hx, y: hy, type: 'scatter', mode: 'lines', xaxis: 'x', yaxis: 'y',
+          line: { color: token('--lg-danger'), width: 1.8 },
+          name: 'Heart rate', showlegend: false,
+          hovertemplate: '%{y:.0f} bpm at %{x:.1f} min<extra></extra>' },
+        strip('y2', 'reps', v => `${v}`),
+        strip('y3', 'weight_lb', v => `${Math.round(v)}`),
+        strip('y4', 'pct_of_ref_1rm', v => `${v}%`),
+        ...legendTraces,
+    ];
+    if (fc && fc.t.length) {
+        traces.push({
+            x: fc.t.map(min), y: fc.value, type: 'scatter', mode: 'lines',
+            xaxis: 'x', yaxis: 'y5', fill: 'tozeroy',
+            line: { color: token('--lg-highlight'), width: 1.6 },
+            fillcolor: 'rgba(0,0,0,0.06)', showlegend: false,
+            hovertemplate: 'fatigue index %{y:.0f} at %{x:.1f} min<extra></extra>',
+        });
+    }
+
+    // Five flush strips on one clock. HR is deliberately no taller than the
+    // rest -- its shape is context, not the point of the chart.
+    const bands = [
+        ['y',  [0.80, 1.00], 'HR (bpm)',      span(hy, 0.10, 0.14)],
+        ['y2', [0.615, 0.775], 'Reps',        span(sets.map(s => s.reps), 0.18, 0.55)],
+        ['y3', [0.43, 0.59],  'Weight (lb)',  span(sets.map(s => s.weight_lb), 0.18, 0.55)],
+        ['y4', [0.245, 0.405], 'Intensity',   span(sets.map(s => s.pct_of_ref_1rm), 0.18, 0.55)],
+        ['y5', [0.06, 0.22],  'Fatigue',      [0, 118]],
+    ];
+    const layout = {
+        margin: { l: 66, r: 14, t: 6, b: 38 },
+        paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
+        font: { color: token('--lg-text-2'), size: 11, family: 'IBM Plex Sans, sans-serif' },
+        height: timelineHeight(), hovermode: 'closest',
+        showlegend: true, legend: { orientation: 'h', y: -0.20 },
+        xaxis: Object.assign({}, axisBase, {
+            domain: [0, 1], anchor: 'y5',
+            title: { text: 'Minutes into session', font: { size: 11 } },
+        }),
+        shapes: shapes.concat(
+            // A rule in each gap so the strips read as separate panels rather
+            // than one crowded plot. Drawn in the mid-grey text colour --
+            // --lg-border is almost invisible over the plot background.
+            bands.slice(1).map(([, dom]) => ({
+                type: 'line', xref: 'paper', yref: 'paper',
+                x0: -0.06, x1: 1, y0: dom[1] + 0.022, y1: dom[1] + 0.022,
+                line: { color: token('--lg-text-3'), width: 1 }, opacity: 0.5,
+            }))
+        ),
+    };
+    bands.forEach(([key, domain, label, range]) => {
+        layout[key === 'y' ? 'yaxis' : 'yaxis' + key.slice(1)] =
+            Object.assign({}, axisBase, { domain, title: title(label), range });
+    });
+    Plotly.newPlot('strength-timeline-chart', traces, layout,
+                   { responsive: true, displaylogo: false });
+}
+
 function renderStrengthDetail(payload) {
     const maxLoad = Math.max(1, ...Object.values(payload.muscle_load || {}));
     document.querySelectorAll('.muscle-region').forEach((region) => {
         const muscle = region.dataset.muscle;
         const value = (payload.muscle_load || {})[muscle] || 0;
         const alpha = value ? 0.18 + 0.72 * Math.sqrt(value / maxLoad) : 0.06;
-        region.style.fill = `color-mix(in srgb, ${token('--lg-highlight')} ${(alpha * 100).toFixed(0)}%, transparent)`;
+        region.style.fill = `color-mix(in srgb, ${token('--lg-gold')} ${(alpha * 100).toFixed(0)}%, transparent)`;
+        region.onmouseenter = () => {
+            document.querySelectorAll(`.group-tile[data-muscles~="${muscle}"]`).forEach((el) => el.classList.add('is-hovered-from-map'));
+            document.querySelectorAll(`.set-tile[data-muscles~="${muscle}"]`).forEach((el) => el.classList.add('is-hovered-from-map'));
+        };
+        region.onmouseleave = () => {
+            document.querySelectorAll('.is-hovered-from-map').forEach((el) => el.classList.remove('is-hovered-from-map'));
+        };
     });
 
-    const body = document.getElementById('strength-sets-body');
-    body.innerHTML = '';
-    (payload.sets || []).forEach((set) => {
-        const tr = document.createElement('tr');
-        const weight = set.weight_lb === null || set.weight_lb === undefined ? '—' : set.weight_lb.toFixed(1) + ' lb';
-        const rest = set.rest_s === null || set.rest_s === undefined ? '—' : Math.round(set.rest_s / 60) + ':' + String(Math.round(set.rest_s % 60)).padStart(2, '0');
-        tr.innerHTML = `
-            <td>${set.set_number}</td>
-            <td>${set.exercise_label || typeLabel(set.exercise)}</td>
-            <td class="num">${set.reps ?? '—'}</td>
-            <td class="num">${weight}</td>
-            <td class="num">${rest}</td>
+    document.getElementById('strength-reviewed-note').textContent = payload.session_reviewed
+        ? 'You appear to have reviewed/corrected exercises in this session -- unreviewed guesses are shown as-is.'
+        : '';
+
+    const list = document.getElementById('strength-sets-list');
+    list.innerHTML = '';
+    const sets = payload.sets || [];
+    const groups = groupConsecutiveSets(sets);
+
+    groups.forEach((group, gi) => {
+        const groupTile = document.createElement('div');
+        groupTile.className = 'group-tile';
+        groupTile.dataset.muscles = (group.muscles || []).join(' ');
+        const oneRmText = group.maxOneRm !== null ? '~' + Math.round(group.maxOneRm) + ' lb best 1RM' : null;
+        const groupStats = [
+            group.setCount + (group.setCount === 1 ? ' set' : ' sets'),
+            group.totalReps + ' reps',
+            oneRmText,
+        ].filter(Boolean).join(' · ');
+        const header = document.createElement('div');
+        header.className = 'group-tile-header';
+        header.innerHTML = `
+            <span class="set-tile-exercise">${group.exercise_label || typeLabel(group.exercise)}</span>
+            <span class="set-tile-stats">${groupStats}</span>
+            ${buildPrBadge((payload.exercise_pr || {})[group.exercise], group.maxOneRm)}
+            <span class="group-tile-caret">&rsaquo;</span>
         `;
-        body.appendChild(tr);
+        groupTile.appendChild(header);
+        groupTile.addEventListener('mouseenter', () => highlightMuscles(group.muscles, true));
+        groupTile.addEventListener('mouseleave', () => highlightMuscles(group.muscles, false));
+
+        const body = document.createElement('div');
+        body.className = 'group-tile-body';
+        body.style.display = 'none';
+        group.sets.forEach((set, si) => {
+            body.appendChild(buildSetTile(set));
+            const nextSet = group.sets[si + 1];
+            if (nextSet) {
+                const restLabel = formatRestDuration(nextSet.rest_s);
+                if (restLabel) {
+                    const connector = document.createElement('div');
+                    connector.className = 'rest-connector';
+                    connector.innerHTML = `<span class="rest-connector-line"></span><span>${restLabel} rest</span>`;
+                    body.appendChild(connector);
+                }
+            }
+        });
+        groupTile.appendChild(body);
+
+        header.addEventListener('click', () => {
+            const isOpen = groupTile.classList.toggle('is-expanded');
+            body.style.display = isOpen ? '' : 'none';
+        });
+        list.appendChild(groupTile);
+
+        const nextGroup = groups[gi + 1];
+        if (nextGroup) {
+            const restLabel = formatRestDuration(nextGroup.sets[0].rest_s);
+            if (restLabel) {
+                const connector = document.createElement('div');
+                connector.className = 'rest-connector';
+                connector.innerHTML = `<span class="rest-connector-line"></span><span>${restLabel} rest</span>`;
+                list.appendChild(connector);
+            }
+        }
     });
-    if (!(payload.sets || []).length) {
-        body.innerHTML = '<tr><td colspan="5" class="status-line" style="padding: 12px;">No set data for this session.</td></tr>';
+    if (!sets.length) {
+        list.innerHTML = '<div class="status-line" style="padding: 12px;">No set data for this session.</div>';
     }
 }
 
@@ -481,24 +984,47 @@ async function loadDetail(sport, activityId, loadToken) {
     );
 
     document.getElementById('detail-activity-name').textContent = payload.activity.name || 'Activity';
-    document.getElementById('detail-activity-meta').textContent = sport === 'strength'
+    const hasDistance = payload.activity.distance_mi !== null && payload.activity.distance_mi !== undefined;
+    document.getElementById('detail-activity-meta').textContent = (sport === 'strength' || !hasDistance)
         ? (payload.activity.date || '') + ' — ' + (payload.activity.duration_min ?? 0).toFixed(0) + ' min'
-        : (payload.activity.date || '') + ' — ' + (payload.activity.duration_min ?? 0).toFixed(0) + ' min, ' + (payload.activity.distance_mi ?? 0).toFixed(1) + ' mi';
+        : (payload.activity.date || '') + ' — ' + (payload.activity.duration_min ?? 0).toFixed(0) + ' min, ' + payload.activity.distance_mi.toFixed(1) + ' mi';
 
     if (sport === 'strength') {
         document.getElementById('cardio-detail-cards').style.display = 'none';
         document.getElementById('strength-detail-cards').style.display = '';
+        renderSessionTimeline(payload);
         renderStrengthDetail(payload);
         return;
     }
     document.getElementById('cardio-detail-cards').style.display = '';
     document.getElementById('strength-detail-cards').style.display = 'none';
+    document.getElementById('strength-timeline-card').style.display = 'none';
 
     const points = payload.points;
-    renderDetailMap(points);
+
+    // Not every sport/activity has every signal -- e.g. bouldering has no
+    // GPS/pace/cadence/power, just heart rate -- so only show the cards
+    // for data this activity actually has, instead of an empty chart or a
+    // misleading "0.0 mi"/flat-zero series.
+    const hasGeo = points.some(p => p.lat !== null && p.lat !== undefined && p.lon !== null && p.lon !== undefined);
+    const hasSpeed = points.some(p => p.speed_mph !== null && p.speed_mph !== undefined);
+    const hasCadence = points.some(p => p.cadence !== null && p.cadence !== undefined);
+    const hasPower = points.some(p => p.power_w !== null && p.power_w !== undefined);
+    const hasHr = points.some(p => p.heart_rate_bpm !== null && p.heart_rate_bpm !== undefined);
+
+    const setCardVisible = (id, visible) => {
+        document.getElementById(id).style.display = visible ? '' : 'none';
+    };
+    setCardVisible('detail-map-card', hasGeo);
+    setCardVisible('detail-pace-card', hasSpeed);
+    setCardVisible('detail-hr-card', hasHr);
+    setCardVisible('detail-cadence-card', hasCadence);
+    setCardVisible('detail-power-card', hasPower);
+    setCardVisible('detail-zones-card', hasHr);
+
+    if (hasGeo) renderDetailMap(points);
 
     const x = elapsedMinutes(points);
-    const pace = points.map(p => paceMinPerMile(p.speed_mph));
     const pauseShapes = pauseWindowShapes(payload.pause_windows, points);
 
     // Scatter, not lines -- these are dense (often 1000s of 1Hz points per
@@ -515,28 +1041,37 @@ async function loadDetail(sport, activityId, loadToken) {
         shapes: pauseShapes,
     }));
 
-    Plotly.newPlot('detail-pace-chart', [
-        { x, y: pace, type: 'scatter', mode: 'markers', marker: detailMarker(DETAIL_CHART_COLORS.pace) },
-    ], chartLayout('Pace (min/mi)', pace), { responsive: true, displaylogo: false });
+    if (hasSpeed) {
+        const pace = points.map(p => paceMinPerMile(p.speed_mph));
+        Plotly.newPlot('detail-pace-chart', [
+            { x, y: pace, type: 'scatter', mode: 'markers', marker: detailMarker(DETAIL_CHART_COLORS.pace) },
+        ], chartLayout('Pace (min/mi)', pace), { responsive: true, displaylogo: false });
+    }
 
-    const hr = points.map(p => p.heart_rate_bpm);
-    Plotly.newPlot('detail-hr-chart', [
-        { x, y: hr, type: 'scatter', mode: 'markers', marker: detailMarker(DETAIL_CHART_COLORS.hr) },
-    ], chartLayout('Heart Rate (bpm)', hr), { responsive: true, displaylogo: false });
+    if (hasHr) {
+        const hr = points.map(p => p.heart_rate_bpm);
+        Plotly.newPlot('detail-hr-chart', [
+            { x, y: hr, type: 'scatter', mode: 'markers', marker: detailMarker(DETAIL_CHART_COLORS.hr) },
+        ], chartLayout('Heart Rate (bpm)', hr), { responsive: true, displaylogo: false });
 
-    const cadence = points.map(p => p.cadence);
-    Plotly.newPlot('detail-cadence-chart', [
-        { x, y: cadence, type: 'scatter', mode: 'markers', marker: detailMarker(DETAIL_CHART_COLORS.cadence) },
-    ], chartLayout('Cadence (spm running / rpm cycling)', cadence), { responsive: true, displaylogo: false });
+        Plotly.newPlot('detail-zones-chart', [
+            { x: payload.zones.labels, y: payload.zones.minutes, type: 'bar', marker: { color: token('--lg-info') } },
+        ], baseLayout('Time in Zone (minutes)'), { responsive: true, displaylogo: false });
+    }
 
-    const power = points.map(p => p.power_w);
-    Plotly.newPlot('detail-power-chart', [
-        { x, y: power, type: 'scatter', mode: 'markers', marker: detailMarker(DETAIL_CHART_COLORS.power) },
-    ], chartLayout('Power (watts)', power), { responsive: true, displaylogo: false });
+    if (hasCadence) {
+        const cadence = points.map(p => p.cadence);
+        Plotly.newPlot('detail-cadence-chart', [
+            { x, y: cadence, type: 'scatter', mode: 'markers', marker: detailMarker(DETAIL_CHART_COLORS.cadence) },
+        ], chartLayout('Cadence (spm running / rpm cycling)', cadence), { responsive: true, displaylogo: false });
+    }
 
-    Plotly.newPlot('detail-zones-chart', [
-        { x: payload.zones.labels, y: payload.zones.minutes, type: 'bar', marker: { color: token('--lg-info') } },
-    ], baseLayout('Time in Zone (minutes)'), { responsive: true, displaylogo: false });
+    if (hasPower) {
+        const power = points.map(p => p.power_w);
+        Plotly.newPlot('detail-power-chart', [
+            { x, y: power, type: 'scatter', mode: 'markers', marker: detailMarker(DETAIL_CHART_COLORS.power) },
+        ], chartLayout('Power (watts)', power), { responsive: true, displaylogo: false });
+    }
 }
 
 document.getElementById('type-filter').addEventListener('change', applyFiltersAndRenderList);

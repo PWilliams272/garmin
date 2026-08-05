@@ -41,9 +41,8 @@
 </style>
 
 <script>
-function token(name) {
-    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-}
+// token() is defined once in static/js/tokens.js -- it resolves color-mix()
+// tokens that getPropertyValue would otherwise return unparsed.
 
 // token() returns a CSS custom property's value as-declared, not resolved --
 // fine for plain hex values, but --lg-text-3 is declared via color-mix(...)

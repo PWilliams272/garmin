@@ -493,6 +493,7 @@ class DataUpdater:
 
     def backfill_activity_details(
         self, dataset: str, detail_fn, detail_dataset: str | None = None, limit: int | None = None,
+        force: bool = False,
     ) -> dict:
         """Fill in curated/activities/detail/<detail_dataset>/ for activities
         that already have a summary row but no detail file yet -- covers
@@ -501,22 +502,30 @@ class DataUpdater:
         each run). Resumable: safe to re-run, only touches ids missing a
         detail file, so a partial run (rate limit, timeout, Ctrl-C) can just
         be re-invoked. Returns counts for the caller to report/log.
+
+        force=True re-fetches every activity_id regardless of whether a
+        detail file already exists -- for when detail_fn's *output schema*
+        changed (e.g. get_strength_workout gaining rest/HR columns) and
+        existing files need overwriting, not just filling gaps.
         """
         detail_dataset = detail_dataset or dataset
         summary = self.curated_store.load_activity_summary(dataset)
         if summary.empty:
             return {"dataset": dataset, "total": 0, "already_had_detail": 0, "fetched": 0, "empty": 0}
 
-        prefix = f"curated/activities/detail/{detail_dataset}/"
-        existing_files = self.curated_store.file_manager.list_files(prefix)
-        existing_ids = {
-            f.rsplit("activity_id=", 1)[-1].removesuffix(".parquet")
-            for f in existing_files if f.endswith(".parquet")
-        }
-
         all_ids = summary["activity_id"].astype(str).tolist()
-        missing_ids = [aid for aid in all_ids if aid not in existing_ids]
-        already_had_detail = len(all_ids) - len(missing_ids)
+        if force:
+            missing_ids = list(all_ids)
+            already_had_detail = 0
+        else:
+            prefix = f"curated/activities/detail/{detail_dataset}/"
+            existing_files = self.curated_store.file_manager.list_files(prefix)
+            existing_ids = {
+                f.rsplit("activity_id=", 1)[-1].removesuffix(".parquet")
+                for f in existing_files if f.endswith(".parquet")
+            }
+            missing_ids = [aid for aid in all_ids if aid not in existing_ids]
+            already_had_detail = len(all_ids) - len(missing_ids)
         if limit is not None:
             missing_ids = missing_ids[:limit]
 
@@ -536,14 +545,18 @@ class DataUpdater:
             "fetched": fetched, "empty": empty,
         }
 
-    def backfill_all_activity_details(self, limit_per_dataset: int | None = None) -> list[dict]:
+    def backfill_all_activity_details(
+        self, limit_per_dataset: int | None = None, only_dataset: str | None = None, force: bool = False,
+    ) -> list[dict]:
         results = []
         for entry in self._activity_type_registry():
+            if only_dataset is not None and entry["dataset"] != only_dataset:
+                continue
             detail_fn = entry.get("detail_fn")
             if detail_fn is None:
                 continue
             result = self.backfill_activity_details(
-                entry["dataset"], detail_fn, entry.get("detail_dataset"), limit_per_dataset,
+                entry["dataset"], detail_fn, entry.get("detail_dataset"), limit_per_dataset, force=force,
             )
             results.append(result)
             print(

@@ -25,6 +25,13 @@ dependencies = [
     "gunicorn>=22.0",
     "scikit-learn>=1.5",
     "statsmodels>=0.14",
+    # Posterior uncertainty for the strength load-rep curves
+    # (garmin.analysis.strength_curve). Sampling is deliberately kept out of
+    # the daily analyzer Lambda -- see that module and GARMIN_HANDOFF.md.
+    # numpyro supplies the JAX-backed NUTS sampler that module defaults to;
+    # without it PyMC's much slower C-backend NUTS is used instead.
+    "pymc>=5.16",
+    "numpyro>=0.15",
     "myutils @ git+https://github.com/PWilliams272/myutils.git@prod",
 ]
 
@@ -83,4 +90,10 @@ check_untyped_defs = false
 # ---------------------------------------------------------------------------
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=garmin --cov-report=term-missing"
+# MCMC fits (tests/test_strength_curve.py) take ~25s each, which is too slow
+# for the default edit-test loop. They're deselected here and run explicitly
+# with `pytest -m slow`.
+addopts = "--cov=garmin --cov-report=term-missing -m 'not slow'"
+markers = [
+    "slow: model fits that sample (MCMC); run with `pytest -m slow`",
+]

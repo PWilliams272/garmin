@@ -174,6 +174,87 @@ class CuratedDataStore:
         )
 
     @staticmethod
+    def exercise_review_path(dataset: str) -> str:
+        return f"curated/analyzed/{dataset}/exercise_review.parquet"
+
+    def load_exercise_review(self, dataset: str) -> pd.DataFrame:
+        """User-facing exercise-guess review state (activity_id + set_index
+        -> our_guess_exercise/confidence/review_status/reason), separate
+        from the raw Garmin-pulled detail so re-pulling from Garmin never
+        clobbers a user's accept/reject decision -- see
+        garmin.analysis.analysis_pipeline.infer_exercise_corrections."""
+        return self._read_df_or_empty(self.exercise_review_path(dataset))
+
+    def write_exercise_review(self, dataset: str, df: pd.DataFrame) -> None:
+        if df.empty:
+            return
+        self.file_manager.write_df(
+            self._prepare_for_parquet(df),
+            self.exercise_review_path(dataset),
+            format="parquet",
+        )
+
+    @staticmethod
+    def strength_variant_index_path(dataset: str) -> str:
+        return f"curated/analyzed/{dataset}/variant_index.parquet"
+
+    def load_strength_variant_index(self, dataset: str) -> pd.DataFrame:
+        """One row per analysed exercise variant: its slug, family, load type
+        and session count. Lets the web tier group variants into families for
+        display without re-deriving the taxonomy."""
+        return self._read_df_or_empty(self.strength_variant_index_path(dataset))
+
+    def write_strength_variant_index(self, dataset: str, df: pd.DataFrame) -> None:
+        if df.empty:
+            return
+        self.file_manager.write_df(
+            self._prepare_for_parquet(df),
+            self.strength_variant_index_path(dataset),
+            format="parquet",
+        )
+
+    @staticmethod
+    def variant_conversion_path(dataset: str) -> str:
+        return f"curated/analyzed/{dataset}/variant_conversions.parquet"
+
+    def load_variant_conversions(self, dataset: str) -> pd.DataFrame:
+        """One row per variant: the empirically fitted multiplier putting it on
+        its family reference variant's scale, plus the evidence behind it (see
+        garmin.analysis.variant_conversion). Rows with `identified` false have a
+        factor that failed its checks and must not be used to combine series."""
+        return self._read_df_or_empty(self.variant_conversion_path(dataset))
+
+    def write_variant_conversions(self, dataset: str, df: pd.DataFrame) -> None:
+        if df.empty:
+            return
+        self.file_manager.write_df(
+            self._prepare_for_parquet(df),
+            self.variant_conversion_path(dataset),
+            format="parquet",
+        )
+
+    @staticmethod
+    def strength_curve_path(dataset: str, exercise: str) -> str:
+        return f"curated/analyzed/{dataset}/{exercise}_strength_curve.parquet"
+
+    def load_strength_curve(self, dataset: str, exercise: str) -> pd.DataFrame:
+        """Fitted load-rep curve output for one exercise: one row per session
+        date with e1RM/e5RM/e8RM posterior means and credible bounds (see
+        garmin.analysis.strength_curve). Written by a separate offline
+        sampling job, not the daily analyzer -- may lag the _1rm/_volume
+        series by a run."""
+        return self._read_df_or_empty(self.strength_curve_path(dataset, exercise))
+
+    def write_strength_curve(self, dataset: str, exercise: str, df: pd.DataFrame) -> None:
+        if df.empty:
+            return
+        self.file_manager.write_df(
+            self._prepare_for_parquet(df),
+            self.strength_curve_path(dataset, exercise),
+            format="parquet",
+        )
+
+    @staticmethod
     def viewer_cache_path(name: str) -> str:
         return f"viewer_cache/{name}.json"
 

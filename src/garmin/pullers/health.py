@@ -119,6 +119,32 @@ class HealthPuller:
                 'chunk_days': 365,
                 'post_processing': self._post_process_hrv,
             },
+            # VO2max (Garmin calls it "max met"). UNVERIFIED: this endpoint
+            # has never been called from this repo, so response_path,
+            # date_field and the mapping below are a best guess at Garmin's
+            # usual shape. Deliberately *not* wired into update_all() until a
+            # real response has been seen. To check it:
+            #
+            #   from garmin.api import GarminSession
+            #   from garmin.pullers.health import HealthPuller
+            #   HealthPuller(GarminSession()).pull_data(
+            #       'vo2max', start_date='2026-07-01', end_date='2026-07-31')
+            #
+            # If the shape differs, fix the config here rather than adding a
+            # bespoke code path.
+            'vo2max': {
+                'url_template': "/metrics-service/metrics/maxmet/daily/{start_date}/{end_date}",
+                'mapping': {
+                    "vo2MaxPreciseValue": "vo2max_precise",
+                    "vo2MaxValue": "vo2max",
+                    "fitnessAge": "fitness_age",
+                    "sport": "sport",
+                },
+                'response_path': None,
+                'date_field': "calendarDate",
+                'values_field': "generic",
+                'chunk_days': 28,
+            },
             'respiration': {
                 'url_template': "/usersummary-service/stats/respiration/daily/{start_date}/{end_date}",
                 'mapping': {

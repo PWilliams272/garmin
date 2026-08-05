@@ -106,8 +106,10 @@ def test_manual_backfill_activity_details_can_target_s3(monkeypatch) -> None:
         def __init__(self, session, db_manager=None, curated_store=None, **kwargs):
             captured['curated_store'] = curated_store
 
-        def backfill_all_activity_details(self, limit_per_dataset=None):
+        def backfill_all_activity_details(self, limit_per_dataset=None, only_dataset=None, force=False):
             captured['limit_per_dataset'] = limit_per_dataset
+            captured['only_dataset'] = only_dataset
+            captured['force'] = force
             captured['backfilled'] = True
 
     monkeypatch.setattr(manual_backfill_activity_details, 'GarminSession', StubSession)
@@ -115,8 +117,12 @@ def test_manual_backfill_activity_details_can_target_s3(monkeypatch) -> None:
     monkeypatch.setattr(manual_backfill_activity_details, 'CuratedDataStore', StubCuratedStore)
     monkeypatch.setattr(manual_backfill_activity_details, 'DataUpdater', StubDataUpdater)
 
-    manual_backfill_activity_details.main(['--storage-target', 's3', '--limit-per-dataset', '25'])
+    manual_backfill_activity_details.main([
+        '--storage-target', 's3', '--limit-per-dataset', '25', '--dataset', 'strength', '--force',
+    ])
 
     assert captured['environment'] == 'aws'
     assert captured['limit_per_dataset'] == 25
+    assert captured['only_dataset'] == 'strength'
+    assert captured['force'] is True
     assert captured['backfilled'] is True

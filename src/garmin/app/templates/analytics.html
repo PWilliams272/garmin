@@ -38,6 +38,11 @@
         <div class="section-heading">Weekly Hours</div>
         <div class="chart-host" id="weekly-hours-chart"></div>
     </div>
+    <div class="card chart-card chart-card-wide">
+        <div class="section-heading">Effort (avg HR) per Week, by Type</div>
+        <div class="status-line" style="margin-bottom: 6px;">A better intensity signal than distance/hours for sports with no GPS or wildly variable session length (e.g. bouldering). Only weeks with a recorded heart rate show a point -- many manually-logged sessions have none.</div>
+        <div class="chart-host" id="weekly-effort-chart"></div>
+    </div>
 </section>
 
 <section class="chart-grid">
@@ -72,9 +77,8 @@
 </section>
 
 <script>
-function token(name) {
-    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-}
+// token() is defined once in static/js/tokens.js -- it resolves color-mix()
+// tokens that getPropertyValue would otherwise return unparsed.
 
 function baseLayout(yTitle, extra) {
     return Object.assign({
@@ -142,6 +146,23 @@ async function loadOverview() {
     Plotly.newPlot('weekly-hours-chart', [
         { x: totals.map(r => r.date), y: totals.map(r => r.total_hours), type: 'bar', marker: { color: token('--lg-highlight') } },
     ], baseLayout('Hours'), { responsive: true, displaylogo: false });
+
+    const effortRows = payload.weekly_effort_by_type || [];
+    const effortTypes = [...new Set(effortRows.map(r => r.type))];
+    const effortTraces = effortTypes.map((type) => {
+        const rows = effortRows.filter(r => r.type === type).sort((a, b) => a.date.localeCompare(b.date));
+        return {
+            x: rows.map(r => r.date),
+            y: rows.map(r => r.avg_hr),
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: type,
+            connectgaps: false,
+            line: { color: token(TYPE_COLORS[type] || '--lg-gold') },
+            marker: { color: token(TYPE_COLORS[type] || '--lg-gold'), size: 5 },
+        };
+    });
+    Plotly.newPlot('weekly-effort-chart', effortTraces, baseLayout('Avg HR (bpm)', { showlegend: true, legend: { orientation: 'h', y: -0.2 } }), { responsive: true, displaylogo: false });
 }
 
 document.getElementById('get-suggestion').addEventListener('click', async () => {

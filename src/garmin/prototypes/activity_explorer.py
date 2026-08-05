@@ -459,7 +459,6 @@ def build_activity_explorer_html(store: CuratedDataStore) -> str:
     .muscle-region {{ fill: var(--muscle-base); stroke: var(--muscle-stroke); stroke-width: 1.5; cursor: pointer; transition: opacity 100ms ease, transform 100ms ease; }}
     .muscle-region:hover {{ opacity: 0.9; }}
     .muscle-region.active {{ stroke: var(--ink); stroke-width: 3; }}
-    .body-label {{ font-size: 12px; fill: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }}
 
     .legend {{ display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; color: var(--muted); font-size: 0.92rem; }}
     .swatch {{ width: 14px; height: 14px; border-radius: 4px; display: inline-block; margin-right: 6px; vertical-align: -2px; }}
@@ -1014,8 +1013,7 @@ def _front_body_svg() -> str:
     anatomical label was assigned by inspecting its position against the
     reference image, then verified by rendering the result."""
     return """
-<svg viewBox="0 -24 362 508" aria-label="Front muscle sketch">
-  <text x="181" y="-8" text-anchor="middle" class="body-label">Front</text>
+<svg viewBox="0 0 362 484" aria-label="Front muscle sketch">
   <path d="M 198.2,16.8 L 186.8,21.5 L 181.2,27.8 L 179.5,33.0 L 179.5,52.8 L 182.0,60.5 L 186.5,66.2 L 185.8,78.8 L 178.8,84.2 L 158.2,93.8 L 148.0,105.2 L 143.8,115.8 L 140.8,134.5 L 135.8,147.8 L 120.2,174.2 L 109.0,202.8 L 103.0,211.2 L 91.8,219.2 L 86.8,228.5 L 87.0,233.0 L 84.5,238.0 L 88.0,242.8 L 96.5,246.2 L 104.8,247.5 L 107.5,245.5 L 115.0,231.2 L 118.8,217.2 L 135.5,194.8 L 147.5,168.2 L 162.2,145.2 L 165.0,144.8 L 170.5,176.0 L 160.5,204.5 L 155.8,233.0 L 154.5,271.5 L 156.8,312.2 L 155.8,339.8 L 151.5,357.2 L 152.8,390.8 L 158.5,432.5 L 155.5,446.2 L 151.2,451.0 L 145.0,453.5 L 142.5,458.5 L 147.0,462.0 L 157.5,462.2 L 170.8,460.0 L 174.2,455.8 L 175.5,437.8 L 173.2,411.0 L 179.0,375.5 L 180.2,341.2 L 195.2,273.5 L 198.5,243.8 L 201.8,242.2 L 206.8,279.0 L 221.5,347.2 L 221.8,376.8 L 227.5,408.8 L 227.5,426.2 L 225.5,437.2 L 226.8,455.8 L 231.0,460.2 L 252.8,462.2 L 256.8,460.8 L 258.8,457.5 L 255.8,453.2 L 249.8,451.0 L 245.2,445.8 L 242.8,433.0 L 248.0,392.8 L 249.8,363.8 L 249.0,353.0 L 245.2,340.2 L 244.2,314.5 L 246.2,277.2 L 245.2,234.2 L 241.0,206.5 L 230.2,175.2 L 236.2,144.8 L 238.5,145.0 L 255.0,170.8 L 265.5,195.0 L 282.8,218.2 L 286.0,231.5 L 293.5,245.5 L 298.5,247.5 L 308.0,245.0 L 313.5,242.2 L 316.2,237.0 L 314.0,233.2 L 314.2,228.5 L 308.5,218.2 L 296.0,209.2 L 290.0,199.2 L 281.2,176.0 L 267.5,152.5 L 261.5,138.8 L 258.0,118.8 L 252.0,103.8 L 241.8,93.0 L 224.0,85.2 L 215.5,79.2 L 214.2,66.5 L 220.2,56.0 L 221.0,32.2 L 214.8,22.0 L 205.5,17.5 Z" class="silhouette"></path>
   <path d="M 179.5,93.0 L 172.5,91.2 L 166.0,91.8 L 157.0,96.8 L 152.5,101.8 L 148.2,109.8 L 144.8,124.2 L 161.5,105.5 Z" class="muscle-region" data-muscle="shoulders"></path>
   <path d="M 220.8,93.2 L 237.0,103.5 L 255.8,123.8 L 255.0,116.8 L 252.0,108.5 L 244.2,97.0 L 233.5,91.5 L 228.5,91.2 Z" class="muscle-region" data-muscle="shoulders"></path>
@@ -1042,10 +1040,17 @@ def _front_body_svg() -> str:
 
 
 def _back_body_svg() -> str:
-    """See _front_body_svg -- same traced-from-reference approach."""
+    """See _front_body_svg -- same traced-from-reference approach.
+
+    The forearm regions were re-traced from assets/muscle_map/body_reference.png
+    (cv2 colour segmentation on the highlighted region, upscale + blur +
+    rethreshold + approxPolyDP, then mapped from image to viewBox coordinates
+    via the silhouette bounding boxes). An earlier version of these two paths
+    was hand-drawn from silhouette coordinates because the reference image had
+    been lost, and it showed -- crude polygons spanning the arm's whole
+    diagonal sweep rather than a muscle band."""
     return """
-<svg viewBox="0 -24 345 508" aria-label="Back muscle sketch">
-  <text x="172" y="-8" text-anchor="middle" class="body-label">Back</text>
+<svg viewBox="0 0 345 484" aria-label="Back muscle sketch">
   <path d="M 157.2,16.8 L 144.5,22.2 L 138.5,32.0 L 137.8,49.2 L 139.5,58.2 L 145.5,66.5 L 144.2,79.2 L 137.0,84.5 L 118.2,92.8 L 109.0,101.5 L 102.8,114.8 L 99.5,134.8 L 92.8,151.2 L 81.0,170.0 L 66.2,205.2 L 61.2,211.8 L 51.5,218.0 L 45.2,229.0 L 45.8,233.0 L 43.5,238.8 L 45.8,242.0 L 54.2,246.0 L 63.5,247.5 L 66.2,245.5 L 74.0,230.5 L 77.0,218.0 L 94.8,193.8 L 106.0,168.5 L 121.0,145.2 L 123.5,144.8 L 129.2,175.8 L 117.8,210.0 L 114.8,230.2 L 113.0,261.5 L 115.5,313.2 L 114.5,339.8 L 111.5,348.2 L 110.0,360.8 L 111.8,394.0 L 117.0,432.0 L 114.5,445.5 L 109.8,451.2 L 103.2,453.8 L 100.8,458.0 L 105.8,462.0 L 115.8,462.2 L 130.0,459.8 L 133.0,455.5 L 134.2,437.5 L 132.0,413.0 L 137.2,379.0 L 138.2,346.0 L 153.0,278.5 L 157.2,243.2 L 160.0,242.2 L 166.5,284.8 L 179.5,341.5 L 180.5,377.2 L 186.5,411.5 L 184.0,437.8 L 185.5,456.0 L 189.8,460.2 L 211.2,462.2 L 215.8,460.5 L 217.2,457.0 L 204.0,446.0 L 201.2,433.0 L 207.0,389.8 L 208.2,358.8 L 204.0,340.0 L 203.0,303.8 L 205.2,256.0 L 203.0,226.0 L 200.0,207.8 L 189.0,175.8 L 194.8,144.5 L 197.2,145.0 L 213.8,171.0 L 223.8,194.2 L 241.0,217.5 L 244.8,231.5 L 252.0,245.2 L 255.0,247.5 L 266.0,245.2 L 272.2,242.2 L 275.0,237.2 L 272.8,233.2 L 273.0,228.5 L 267.8,219.0 L 255.0,209.5 L 249.2,200.2 L 239.0,173.8 L 221.0,141.0 L 216.0,116.2 L 209.2,101.5 L 199.5,92.5 L 181.8,84.8 L 173.8,78.8 L 173.2,66.0 L 177.8,59.8 L 180.0,48.0 L 179.0,30.0 L 171.2,20.5 Z" class="silhouette"></path>
   <path d="M 156.5,76.2 L 121.5,94.5 L 123.8,96.5 L 140.8,103.0 L 147.2,130.2 L 155.0,146.8 L 156.5,122.2 Z" class="muscle-region" data-muscle="traps"></path>
   <path d="M 161.8,76.5 L 161.5,113.2 L 163.0,146.8 L 170.5,131.8 L 177.5,103.2 L 196.8,94.5 Z" class="muscle-region" data-muscle="traps"></path>
@@ -1064,8 +1069,13 @@ def _back_body_svg() -> str:
   <path d="M 154.8,154.2 L 150.8,158.2 L 145.2,171.2 L 137.2,183.0 L 151.0,195.0 L 155.2,197.0 L 156.0,155.0 Z" class="muscle-region" data-muscle="obliques"></path>
   <path d="M 162.8,154.2 L 162.2,196.2 L 164.0,196.8 L 178.5,186.0 L 181.2,182.2 L 173.2,171.8 L 167.5,158.2 Z" class="muscle-region" data-muscle="obliques"></path>
   <path d="M 187.5,180.0 L 181.8,189.2 L 189.2,195.0 L 195.0,207.5 L 197.0,220.5 L 197.0,232.0 L 192.8,240.8 L 202.2,253.0 L 202.5,244.8 L 198.5,211.2 L 191.5,187.8 Z" class="muscle-region" data-muscle="glutes"></path>
-  <path d="M 130.8,180.5 L 127.2,186.5 L 120.0,210.2 L 117.0,230.8 L 115.8,254.0 L 125.5,240.8 L 122.0,235.0 L 121.2,230.2 L 121.8,214.8 L 123.8,206.2 L 129.8,194.0 L 136.8,189.0 Z" class="muscle-region" data-muscle="calves"></path>
-  <path d="M 154.2,236.8 L 140.5,239.8 L 144.0,277.5 L 143.5,305.5 L 147.8,292.5 L 152.8,266.5 L 155.5,239.8 Z" class="muscle-region" data-muscle="calves"></path>
+  <path d="M 130.8,180.5 L 127.2,186.5 L 120.0,210.2 L 117.0,230.8 L 115.8,254.0 L 125.5,240.8 L 122.0,235.0 L 121.2,230.2 L 121.8,214.8 L 123.8,206.2 L 129.8,194.0 L 136.8,189.0 Z" class="muscle-region" data-muscle="glutes"></path>
+  <path d="M 154.2,236.8 L 140.5,239.8 L 144.0,277.5 L 143.5,305.5 L 147.8,292.5 L 152.8,266.5 L 155.5,239.8 Z" class="muscle-region" data-muscle="hamstrings"></path>
+  <path d="M 164.2,236.8 L 177.9,239.8 L 174.4,277.5 L 174.9,305.5 L 170.6,292.5 L 165.6,266.5 L 162.9,239.8 Z" class="muscle-region" data-muscle="hamstrings"></path>
+  <path d="M 98.3,166.6 L 95.5,166.3 L 91.2,167.5 L 84.4,173.1 L 76.1,190.6 L 73.1,203.2 L 73.1,207.0 L 74.6,209.0 L 78.2,207.5 L 83.3,203.1 L 94.5,189.4 L 98.9,182.4 L 101.1,175.4 L 100.8,169.8 Z" class="muscle-region" data-muscle="forearms"></path>
+  <path d="M 221.0,166.6 L 218.5,169.5 L 218.5,175.6 L 220.1,182.1 L 235.7,202.8 L 242.3,208.4 L 245.0,208.7 L 246.2,206.4 L 245.2,196.8 L 237.0,176.2 L 234.4,172.5 L 228.7,167.8 L 224.1,166.3 Z" class="muscle-region" data-muscle="forearms"></path>
+  <path d="M 118.0,344.0 L 113.0,358.0 L 112.0,378.0 L 116.0,398.0 L 122.0,414.0 L 129.0,406.0 L 134.0,384.0 L 136.0,360.0 L 132.0,346.0 Z" class="muscle-region" data-muscle="calves"></path>
+  <path d="M 200.4,344.0 L 205.4,358.0 L 206.4,378.0 L 202.4,398.0 L 196.4,414.0 L 189.4,406.0 L 184.4,384.0 L 182.4,360.0 L 186.4,346.0 Z" class="muscle-region" data-muscle="calves"></path>
 </svg>
 """
 

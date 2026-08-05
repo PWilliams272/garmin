@@ -12,6 +12,7 @@ from garmin.io.file_manager import FileManager
 # Reusing these functions (rather than reimplementing the same assembly
 # logic here) keeps the cached payload and the live-fallback payload
 # guaranteed identical in shape.
+from garmin.analysis.model_report import build_model_report
 from garmin.app import routes as app_routes
 from garmin.prototypes.activity_explorer import build_activity_explorer_html
 
@@ -43,6 +44,7 @@ def build_viewer_cache(storage_target: str) -> None:
         (f'activities_overview_{source}', lambda: app_routes._activities_real_payload(source=source)),
         (f'activities_list_{source}', lambda: app_routes._activities_list_payload(source=source)),
         (f'data_status_{source}', lambda: app_routes._data_status_payload(source=source)),
+        (f'model_report_{source}', lambda: build_model_report(store)),
     ]
 
     # Each job is independent -- one dataset's transient failure (e.g. a

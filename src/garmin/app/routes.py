@@ -4,10 +4,18 @@ from garmin.io.file_manager import FileManager
 from garmin.data_processor.processor import GarminDataProcessor
 from garmin.analysis.quality import classify_metric
 from garmin.analysis.trend_gp import fit_gp_trend
-from garmin.analysis.analysis_pipeline import STRENGTH_EXERCISE_CANDIDATES
+from garmin.analysis.model_report import build_model_report
+from garmin.analysis.analysis_pipeline import (
+    LOAD_TYPE_BODYWEIGHT,
+    session_fatigue_curve,
+    STRENGTH_EXERCISE_CANDIDATES,
+    load_type_for,
+    variant_slug,
+)
 from garmin.updaters import ACTIVITY_DATASETS
 from garmin.prototypes.activity_explorer import (
     build_activity_explorer_html,
+    blended_1rm,
     EXERCISE_MUSCLES,
     format_exercise_label,
     _front_body_svg,
@@ -15,6 +23,7 @@ from garmin.prototypes.activity_explorer import (
 )
 import numpy as np
 import pandas as pd
+import math
 import os
 import random as _random
 
@@ -403,25 +412,106 @@ def _lifting_real_payload(source: str = 'local') -> dict | None:
     detail = detail.merge(summary[['activity_id', 'date']], on='activity_id', how='left')
     detail = detail.dropna(subset=['date'])
 
+    # Keyed on *variant*, not Garmin's category. A "bench_press" series that
+    # mixes 55 lb dumbbell work with 135 lb barbell work isn't one exercise,
+    # and plotting both on one axis reads as a strength jump that never
+    # happened. analyze_lifting writes an index of what it produced.
+    index = store.load_strength_variant_index('strength')
+    if index.empty:
+        return None
+
     exercises = {}
-    session_counts = detail.groupby('exercise')['activity_id'].nunique()
-    for exercise in STRENGTH_EXERCISE_CANDIDATES:
-        points = store.load_analyzed_points('strength', f'{exercise}_1rm')
+    for _, row in index.iterrows():
+        slug, variant = str(row['slug']), str(row['variant'])
+        load_type = str(row['load_type'])
+        if load_type == LOAD_TYPE_BODYWEIGHT:
+            metric, value_key, unit = 'top_reps', 'top_reps', 'reps'
+            volume_metric = f'{slug}_rep_volume'
+        else:
+            metric, value_key, unit = '1rm', 'est_1rm', 'lb'
+            volume_metric = f'{slug}_volume'
+
+        points = store.load_analyzed_points('strength', f'{slug}_{metric}')
         if points.empty:
             continue
-        trend = store.load_analyzed_trend('strength', f'{exercise}_1rm', kind='sts')
-        volume_trend = store.load_analyzed_trend('strength', f'{exercise}_volume', kind='sts')
-        exercises[exercise] = {
+        trend = store.load_analyzed_trend('strength', f'{slug}_{metric}', kind='sts')
+        volume_trend = store.load_analyzed_trend('strength', volume_metric, kind='sts')
+        curve = store.load_strength_curve('strength', slug)
+        exercises[variant] = {
             'points': _timeseries_records(points),
             'trend': _timeseries_records(trend) if not trend.empty else [],
             'volume_trend': _timeseries_records(volume_trend) if not volume_trend.empty else [],
-            'sessions': int(session_counts.get(exercise, 0)),
+            'sessions': int(row['sessions']),
+            'load_type': load_type,
+            'value_key': value_key,
+            'unit': unit,
+            'family': str(row['family']),
+            'median_weight': float(row['median_weight']) if pd.notnull(row.get('median_weight')) else None,
+            # Posterior eXRM from the load-rep model, when the offline
+            # sampling job has run for this variant. Empty is normal.
+            'curve': _timeseries_records(curve) if not curve.empty else [],
         }
 
     if not exercises:
         return None
 
     exercise_order = sorted(exercises, key=lambda ex: exercises[ex]['sessions'], reverse=True)
+    families: dict[str, list[str]] = {}
+    for variant in exercise_order:
+        families.setdefault(exercises[variant]['family'], []).append(variant)
+
+    # Date -> activity_id, so a point on a progression chart can link through
+    # to the session that produced it. Analysed points are keyed by date only
+    # (one row per session date), and strength sessions are effectively one
+    # per day here, so the date is a sound join key; where a day somehow has
+    # two, the first is used rather than guessing.
+    session_links = (
+        detail.dropna(subset=['date'])
+        .assign(_d=lambda f: pd.to_datetime(f['date']).dt.strftime('%Y-%m-%d'))
+        .drop_duplicates(subset=['_d'])
+        .set_index('_d')['activity_id']
+        .astype(str)
+        .to_dict()
+    )
+
+    # The combined per-family series: every variant converted onto one scale,
+    # so "is my bench progressing" has an answer that doesn't jump when the
+    # implement changes. analyze_lifting writes these as family_<slug>_1rm.
+    conversions = store.load_variant_conversions('strength')
+    combined: dict[str, dict] = {}
+    for family in families:
+        slug = variant_slug(family)
+        points = store.load_analyzed_points('strength', f'family_{slug}_1rm')
+        if points.empty:
+            continue
+        trend = store.load_analyzed_trend('strength', f'family_{slug}_1rm', kind='sts')
+        rows = conversions[conversions['family'] == family] if not conversions.empty else pd.DataFrame()
+        combined[family] = {
+            'points': _timeseries_records(points),
+            'trend': _timeseries_records(trend) if not trend.empty else [],
+            'reference': str(rows['reference'].iloc[0]) if len(rows) else None,
+            # The variant whose units the series is expressed in. Not always
+            # the fitting anchor: the anchor is chosen for identifiability
+            # (always a labelled variant), the display scale for familiarity
+            # (the most-trained one). Factors are relative to this.
+            'display_variant': (
+                str(rows['display_variant'].iloc[0])
+                if len(rows) and 'display_variant' in rows.columns
+                   and pd.notnull(rows['display_variant'].iloc[0])
+                else (str(rows['reference'].iloc[0]) if len(rows) else None)
+            ),
+            'factors': [
+                {
+                    'variant': str(r['variant']),
+                    'factor': float(r['factor']),
+                    'identified': bool(r['identified']),
+                    'n_sessions': int(r['n_sessions']),
+                    'paired_ratio': None if pd.isnull(r.get('paired_ratio')) else float(r['paired_ratio']),
+                    'overlap_days': None if pd.isnull(r.get('overlap_days')) else float(r['overlap_days']),
+                }
+                for _, r in rows.iterrows()
+            ],
+        }
 
     weekly_frequency = (
         detail.drop_duplicates(subset=['activity_id', 'exercise'])
@@ -433,6 +523,14 @@ def _lifting_real_payload(source: str = 'local') -> dict | None:
     return {
         'exercises': exercises,
         'exercise_order': exercise_order,
+        # family -> [variant, ...]. Variants of one movement belong on the
+        # same chart (they're the same progression) but need distinguishing,
+        # since a dumbbell and a barbell version sit at different loads.
+        'families': families,
+        # family -> combined series + the conversion factors behind it.
+        'combined': combined,
+        # date -> activity_id, for linking a plotted point to its session.
+        'session_links': session_links,
         'weekly_frequency': _timeseries_records(weekly_frequency),
     }
 
@@ -448,6 +546,7 @@ def _mock_activities() -> pd.DataFrame:
     has_distance = {'running', 'cycling', 'swimming'}
     avg_duration_min = {'running': 45, 'cycling': 75, 'climbing': 90, 'lifting': 55, 'swimming': 40}
     avg_distance_mi = {'running': 4.5, 'cycling': 15.0, 'swimming': 1.2}
+    avg_hr_by_type = {'running': 148, 'cycling': 132, 'climbing': 118, 'lifting': 110, 'swimming': 138}
 
     rows = []
     for week_idx in range(weeks):
@@ -462,11 +561,13 @@ def _mock_activities() -> pd.DataFrame:
                 distance = None
                 if activity_type in has_distance:
                     distance = max(0.5, rng.normal(avg_distance_mi[activity_type], avg_distance_mi[activity_type] * 0.3))
+                avg_hr = max(80.0, rng.normal(avg_hr_by_type[activity_type], 8))
                 rows.append({
                     'date': activity_date,
                     'type': activity_type,
                     'duration_min': round(float(duration), 1),
                     'distance_mi': round(float(distance), 2) if distance is not None else None,
+                    'avg_hr': round(float(avg_hr)),
                 })
     return pd.DataFrame(rows).sort_values('date').reset_index(drop=True)
 
@@ -507,6 +608,7 @@ def _activities_real_payload(source: str = 'local') -> dict | None:
         frame['activity_id'] = summary.get('activity_id')
         frame['duration_min'] = summary.get('duration_min')
         frame['distance_mi'] = summary.get('distance_mi') if 'distance_mi' in summary.columns else None
+        frame['avg_hr'] = summary.get('avg_hr') if 'avg_hr' in summary.columns else None
         frames.append(frame)
 
     if not frames:
@@ -575,12 +677,31 @@ def _activities_overview_from_df(df: pd.DataFrame) -> dict:
         df.set_index('date').resample('W-MON')['duration_min'].sum() / 60
     ).round(1).values
 
+    # Effort/intensity proxy -- weekly mean avg_hr per type. Distance and
+    # hours (above) are weak or misleading effort signals for non-GPS,
+    # widely-variable-duration sports (e.g. a 500min bouldering session
+    # isn't 8x the effort of a 60min one), so this is a separate, sparser
+    # series: only weeks where that type has at least one session with a
+    # recorded avg_hr produce a point (many older/manually-logged sessions
+    # have none at all -- see ACTIVITY_DATASETS coverage).
+    weekly_effort = pd.DataFrame(columns=['date', 'type', 'avg_hr'])
+    if 'avg_hr' in df.columns:
+        weekly_effort = (
+            df.dropna(subset=['avg_hr'])
+            .set_index('date')
+            .groupby([pd.Grouper(freq='W-MON'), 'type'])['avg_hr']
+            .mean()
+            .round(1)
+            .reset_index()
+        )
+
     recent = df.sort_values('date', ascending=False).head(15)
 
     return {
         'activity_types': sorted(df['type'].unique().tolist()),
         'weekly_by_type': _timeseries_records(weekly_by_type),
         'weekly_totals': _timeseries_records(weekly_totals),
+        'weekly_effort_by_type': _timeseries_records(weekly_effort),
         'recent_activities': _timeseries_records(recent),
         'kpis': {
             'total_activities': int(len(df)),
@@ -756,6 +877,62 @@ def _activity_detail_real_payload(sport: str = 'running', activity_id: str | Non
     }
 
 
+def _exercise_pr_context(store: CuratedDataStore, exercise: str, session_date, session_best_1rm: float | None) -> dict | None:
+    """How today's best set for one exercise compares to your history, read
+    from garmin.analysis.analysis_pipeline.analyze_lifting's precomputed
+    curated/analyzed/strength/<exercise>_1rm_* output (same "no live model
+    fitting" rule as everywhere else -- this only reads already-fit points/
+    trend, it doesn't fit anything itself). Returns None if that exercise
+    hasn't cleared STRENGTH_MIN_SESSIONS yet (no analyzed output exists).
+
+    prior_best_1rm is the max across sessions strictly *before* this one --
+    "did today beat your PR going in," not including today's own result.
+    trend_1rm is the smoothed STS trend's value nearest this session's date
+    (last point at-or-before it, else the earliest available point if this
+    session predates the trend's own range). days_since_last_session is the
+    gap to the most recent earlier session of this exercise.
+    """
+    if session_best_1rm is None:
+        return None
+
+    points = store.load_analyzed_points('strength', f'{exercise}_1rm')
+    if points.empty:
+        return None
+    points = points.copy()
+    points['date'] = pd.to_datetime(points['date'])
+    # analyze_lifting's points are one per calendar date (date-only, time
+    # normalized to midnight); session_date carries this session's actual
+    # time-of-day (from set_start_time). Comparing those directly made
+    # today's own point count as "prior" (its midnight timestamp is earlier
+    # than today's actual set-start time) -- normalize both to the
+    # calendar date so "prior" genuinely excludes today.
+    session_date = pd.Timestamp(session_date).normalize()
+
+    prior = points[points['date'] < session_date]
+    prior_best = float(prior['est_1rm'].max()) if not prior.empty else None
+    days_since_last = int((session_date - prior['date'].max()).days) if not prior.empty else None
+
+    trend_at_date = None
+    trend = store.load_analyzed_trend('strength', f'{exercise}_1rm', kind='sts')
+    if not trend.empty:
+        trend = trend.copy()
+        trend['date'] = pd.to_datetime(trend['date'])
+        at_or_before = trend[trend['date'] <= session_date]
+        nearest = at_or_before.sort_values('date').iloc[-1] if not at_or_before.empty else trend.sort_values('date').iloc[0]
+        trend_at_date = float(nearest['mean'])
+
+    if prior_best is None and trend_at_date is None:
+        return None
+
+    return {
+        'prior_best_1rm': round(prior_best, 1) if prior_best is not None else None,
+        'trend_1rm': round(trend_at_date, 1) if trend_at_date is not None else None,
+        'days_since_last_session': days_since_last,
+        'pct_of_prior_best': round(session_best_1rm / prior_best * 100) if prior_best else None,
+        'pct_of_trend': round(session_best_1rm / trend_at_date * 100) if trend_at_date else None,
+    }
+
+
 def _strength_activity_detail_payload(activity_id: str | None = None, source: str = 'local') -> dict | None:
     """Per-set detail (exercise, reps, weight, rest between sets) plus a
     session muscle-load breakdown for one strength_training activity --
@@ -766,12 +943,17 @@ def _strength_activity_detail_payload(activity_id: str | None = None, source: st
     scheduled updater (curated/activities/detail/strength/, keyed by
     activity_id directly -- not the "<sport>_timeseries" naming cardio
     sports use, since this was wired in before that convention existed).
-    Rest time isn't pulled directly; it's derived from consecutive sets'
-    set_start_time/duration_s. Muscle load is volume (reps * weight, or
-    just reps for a bodyweight movement) distributed across each
-    exercise's EXERCISE_MUSCLES activation fractions and summed -- the
-    same model garmin.prototypes.activity_explorer's multi-session view
-    uses, just scoped to one session.
+    Rest and HR come from the FIT file's native set/record messages
+    (rest_before_s/hr_avg/hr_max columns) when the puller found them;
+    activities pulled before that enrichment landed (or where the FIT
+    parse failed) fall back to a derived rest-from-timestamp-gap estimate
+    and no HR. Muscle load is volume (reps * weight, or just reps for a
+    bodyweight movement) distributed across each exercise's
+    EXERCISE_MUSCLES activation fractions and summed -- the same model
+    garmin.prototypes.activity_explorer's multi-session view uses, just
+    scoped to one session. 1RM is per-set (see blended_1rm) -- read it
+    loosely for anything that isn't a near-max-effort set (a 15-rep
+    warmup's "1RM" is a much noisier extrapolation than a 3-rep top set).
     """
     store = curated_s3 if source == 's3' else curated_local
 
@@ -798,9 +980,17 @@ def _strength_activity_detail_payload(activity_id: str | None = None, source: st
     start = pd.to_datetime(detail.get('set_start_time'), errors='coerce')
     duration = pd.to_numeric(detail.get('duration_s'), errors='coerce')
 
+    # Prefer the FIT-native rest duration (pulled straight from the file's
+    # own alternating active/rest `set` messages) when the puller found it;
+    # only derive from the timestamp gap for rows/sessions missing it (data
+    # pulled before this enrichment, or a FIT parse that failed).
+    fit_rest = pd.to_numeric(detail.get('rest_before_s'), errors='coerce') if 'rest_before_s' in detail.columns else pd.Series([None] * len(detail))
     rest_s = [None] * len(detail)
-    for i in range(1, len(detail)):
-        if pd.isna(start.iloc[i]) or pd.isna(start.iloc[i - 1]):
+    for i in range(len(detail)):
+        if pd.notnull(fit_rest.iloc[i]):
+            rest_s[i] = round(float(fit_rest.iloc[i]))
+            continue
+        if i == 0 or pd.isna(start.iloc[i]) or pd.isna(start.iloc[i - 1]):
             continue
         prior_duration = duration.iloc[i - 1] if pd.notnull(duration.iloc[i - 1]) else 0.0
         prior_end = start.iloc[i - 1] + pd.Timedelta(seconds=float(prior_duration))
@@ -809,19 +999,68 @@ def _strength_activity_detail_payload(activity_id: str | None = None, source: st
 
     muscle_load: dict[str, float] = {}
     exercise_labels = []
+    one_rm = []
+    candidates = []
+    muscles_per_set = []
     for _, row in detail.iterrows():
         exercise = str(row.get('exercise') or 'unknown')
         exercise_labels.append(format_exercise_label(exercise))
         reps = row.get('reps') or 0
         weight = row.get('weight_lb')
         volume = float(reps) * float(weight) if pd.notnull(weight) else float(reps)
+        muscles_per_set.append(list(EXERCISE_MUSCLES.get(exercise, {}).keys()))
         for muscle, fraction in EXERCISE_MUSCLES.get(exercise, {}).items():
             muscle_load[muscle] = muscle_load.get(muscle, 0.0) + volume * fraction
 
+        estimate = blended_1rm(weight, reps) if pd.notnull(weight) else float('nan')
+        one_rm.append(round(estimate, 1) if pd.notnull(estimate) and not math.isnan(estimate) else None)
+
+        row_candidates = []
+        for i in range(1, 4):
+            cand_exercise = row.get(f'candidate_{i}_exercise')
+            cand_prob = row.get(f'candidate_{i}_probability')
+            if pd.isna(cand_exercise):
+                continue
+            row_candidates.append({
+                'exercise': format_exercise_label(str(cand_exercise)),
+                'probability': round(float(cand_prob), 1) if pd.notnull(cand_prob) else None,
+            })
+        candidates.append(row_candidates)
+
     sets_df = detail[['exercise', 'reps', 'weight_lb']].copy()
     sets_df['exercise_label'] = exercise_labels
+    sets_df['exercise_name'] = detail.get('exercise_name')
+    sets_df['manually_reviewed'] = detail['manually_reviewed'].fillna(False) if 'manually_reviewed' in detail.columns else False
     sets_df['rest_s'] = rest_s
     sets_df['set_number'] = range(1, len(detail) + 1)
+    sets_df['one_rm_lb'] = one_rm
+    sets_df['hr_avg'] = pd.to_numeric(detail.get('hr_avg'), errors='coerce') if 'hr_avg' in detail.columns else None
+    sets_df['hr_max'] = pd.to_numeric(detail.get('hr_max'), errors='coerce') if 'hr_max' in detail.columns else None
+    # Needed to lay the session out on one clock (see _add_session_timeline).
+    sets_df['duration_s'] = pd.to_numeric(detail.get('duration_s'), errors='coerce') if 'duration_s' in detail.columns else None
+    sets_df['set_start_time'] = detail.get('set_start_time') if 'set_start_time' in detail.columns else None
+
+    hr_series = []
+    for _, row in detail.iterrows():
+        t_series = row.get('hr_series_t')
+        bpm_series = row.get('hr_series_bpm')
+        if isinstance(t_series, (list, np.ndarray)) and len(t_series):
+            hr_series.append({'t': list(t_series), 'bpm': [float(v) for v in bpm_series]})
+        else:
+            hr_series.append(None)
+
+    session_reviewed = bool(sets_df['manually_reviewed'].any())
+
+    session_date_for_pr = pd.to_datetime(detail['set_start_time'], errors='coerce').min()
+    exercise_pr: dict[str, dict] = {}
+    if pd.notnull(session_date_for_pr):
+        for exercise in sets_df['exercise'].unique():
+            exercise_sets = sets_df[sets_df['exercise'] == exercise]
+            session_best = exercise_sets['one_rm_lb'].max()
+            session_best = float(session_best) if pd.notnull(session_best) else None
+            context = _exercise_pr_context(store, str(exercise), session_date_for_pr, session_best)
+            if context is not None:
+                exercise_pr[str(exercise)] = context
 
     summary = store.load_activity_summary('strength')
     activity_meta = {'type': 'strength', 'name': None, 'date': None, 'duration_min': None}
@@ -834,12 +1073,92 @@ def _strength_activity_detail_payload(activity_id: str | None = None, source: st
             'duration_min': float(r['duration_min']) if pd.notnull(r.get('duration_min')) else None,
         })
 
+    set_records = _timeseries_records(sets_df)
+    for record, row_candidates, muscles, hr_pts in zip(set_records, candidates, muscles_per_set, hr_series, strict=True):
+        record['candidates'] = row_candidates
+        record['muscles'] = muscles
+        record['hr_series'] = hr_pts
+
+    fatigue_curve = _add_session_timeline(set_records, sets_df, exercise_pr)
+
     return {
         'activity': activity_meta,
         'activity_id': str(activity_id),
-        'sets': _timeseries_records(sets_df),
+        'sets': set_records,
         'muscle_load': muscle_load,
+        'session_reviewed': session_reviewed,
+        'exercise_pr': exercise_pr,
+        'fatigue_curve': fatigue_curve,
     }
+
+
+def _add_session_timeline(set_records: list[dict], sets_df: pd.DataFrame, exercise_pr: dict) -> dict | None:
+    """Place every set on one session clock, for the HR/set-band timeline.
+
+    Each set's `hr_series_t` is measured from that set's own start and only
+    spans the set itself -- Garmin gives no heart rate between sets -- so the
+    rest gaps genuinely have no data and render as empty space, which is what
+    a rest period should look like anyway.
+
+    Adds to each record: `t_start_s` / `t_end_s` (seconds from the session's
+    first set), `hr_abs` (the same HR points shifted onto that clock) and
+    `pct_of_ref_1rm`, the set's load as a share of the best estimate of that
+    exercise's 1RM available -- prior best if there is history, else the
+    session's own best.
+    """
+    if not set_records or 'set_start_time' not in sets_df.columns:
+        return None
+    starts = pd.to_datetime(sets_df['set_start_time'], errors='coerce')
+    if starts.isna().all():
+        return None
+    origin = starts.min()
+
+    session_best = sets_df.groupby('exercise')['one_rm_lb'].max().to_dict()
+    for record, start in zip(set_records, starts, strict=True):
+        if pd.isna(start):
+            record['t_start_s'] = None
+            record['t_end_s'] = None
+            record['hr_abs'] = None
+            record['pct_of_ref_1rm'] = None
+            continue
+        offset = float((start - origin).total_seconds())
+        duration = record.get('duration_s')
+        record['t_start_s'] = round(offset, 1)
+        record['t_end_s'] = round(offset + float(duration), 1) if duration else None
+
+        hr = record.get('hr_series')
+        record['hr_abs'] = (
+            {'t': [round(offset + float(t), 1) for t in hr['t']], 'bpm': hr['bpm']}
+            if hr and hr.get('t') else None
+        )
+
+        exercise = record.get('exercise')
+        context = exercise_pr.get(str(exercise)) or {}
+        reference = context.get('prior_best_1rm') or session_best.get(exercise)
+        # Intensity as the *estimated 1RM this set demonstrates*, relative to
+        # the best 1RM known for that exercise -- not raw weight over 1RM.
+        # Raw weight understates a hard high-rep set: 10 reps at 135 lb and
+        # 3 reps at 185 lb are similar efforts, but only the rep-adjusted
+        # estimate says so.
+        set_1rm = record.get('one_rm_lb')
+        record['pct_of_ref_1rm'] = (
+            round(float(set_1rm) / float(reference) * 100) if set_1rm and reference else None
+        )
+
+    # Within-session fatigue (see analysis_pipeline.session_fatigue_curve --
+    # a Banister-style heuristic, not a fitted result). Sampled on a regular
+    # grid so it draws as a smooth curve rather than only at set times.
+    placed = [r for r in set_records if r.get('t_start_s') is not None]
+    if placed:
+        work = [
+            float(r.get('reps') or 0) * float(r.get('weight_lb') or 0) or float(r.get('reps') or 0)
+            for r in placed
+        ]
+        span = max((r.get('t_end_s') or r['t_start_s']) for r in placed)
+        grid = [i * 15.0 for i in range(int(span / 15) + 2)]
+        curve = session_fatigue_curve([r['t_start_s'] for r in placed], work, grid)
+        return {'t': grid, 'value': curve}
+    return None
 
 
 def _mock_strength_activity_detail() -> dict:
@@ -853,13 +1172,28 @@ def _mock_strength_activity_detail() -> dict:
     for exercise in exercises:
         base_weight = {'bench_press': 135.0, 'squat': 185.0, 'row': 95.0, 'curl': 30.0}[exercise]
         for _ in range(int(rng.integers(3, 5))):
+            reps = int(rng.integers(6, 11))
+            weight_lb = round(base_weight + float(rng.normal(0, 5)), 1)
+            duration_s = int(rng.integers(25, 45))
+            hr_base = float(rng.normal(115, 12))
             rows.append({
                 'exercise': exercise,
                 'exercise_label': format_exercise_label(exercise),
-                'reps': int(rng.integers(6, 11)),
-                'weight_lb': round(base_weight + float(rng.normal(0, 5)), 1),
+                'exercise_name': None,
+                'manually_reviewed': False,
+                'reps': reps,
+                'weight_lb': weight_lb,
                 'rest_s': int(rng.integers(60, 150)) if set_number > 1 else None,
                 'set_number': set_number,
+                'one_rm_lb': round(blended_1rm(weight_lb, reps), 1),
+                'hr_avg': round(hr_base, 1),
+                'hr_max': round(hr_base + 12, 1),
+                'candidates': [{'exercise': format_exercise_label(exercise), 'probability': 80.0}],
+                'muscles': list(EXERCISE_MUSCLES.get(exercise, {}).keys()),
+                'hr_series': {
+                    't': list(range(0, duration_s, 2)),
+                    'bpm': [round(hr_base + i * 0.3, 1) for i in range(len(range(0, duration_s, 2)))],
+                },
             })
             set_number += 1
 
@@ -876,7 +1210,115 @@ def _mock_strength_activity_detail() -> dict:
         },
         'sets': rows,
         'muscle_load': muscle_load,
+        'session_reviewed': False,
+        'exercise_pr': {},
     }
+
+
+def _load_exercise_review_with_context(store: CuratedDataStore) -> pd.DataFrame:
+    """Loads exercise_review.parquet and joins in date/name from the
+    strength activity summary, plus display labels for both the original
+    and our-guess exercise. Shared by the activities-list and
+    activity-detail payload builders below.
+    """
+    review = store.load_exercise_review('strength')
+    if review.empty:
+        return review
+
+    summary = store.load_activity_summary('strength')
+    if not summary.empty:
+        summary = summary[['activity_id', 'date', 'name']].copy()
+        summary['activity_id'] = summary['activity_id'].astype(str)
+        review = review.merge(summary, on='activity_id', how='left')
+    else:
+        review['date'] = None
+        review['name'] = None
+
+    review['original_exercise_label'] = review['original_exercise'].apply(
+        lambda ex: format_exercise_label(str(ex)) if pd.notnull(ex) else None
+    )
+    review['our_guess_label'] = review['our_guess_exercise'].apply(
+        lambda ex: format_exercise_label(str(ex)) if pd.notnull(ex) else None
+    )
+    return review
+
+
+def _exercise_review_status_counts(statuses: pd.Series) -> dict[str, int]:
+    counts = statuses.value_counts().to_dict()
+    return {
+        'pending': int(counts.get('pending', 0)),
+        'accepted': int(counts.get('accepted', 0)),
+        'rejected': int(counts.get('rejected', 0)),
+        'garmin_confirmed': int(counts.get('garmin_confirmed', 0)),
+    }
+
+
+def _exercise_review_activities_payload(source: str = 'local') -> dict | None:
+    """One row per strength activity with review-status counts across its
+    sets, so the review UI can group by activity (pick a session, review
+    every set in it) instead of a flat cross-session queue. Same cheap
+    read-live rationale as the per-activity payload below -- everything
+    needed is already denormalized into exercise_review.parquet.
+    """
+    store = curated_s3 if source == 's3' else curated_local
+    review = _load_exercise_review_with_context(store)
+    if review.empty:
+        return None
+
+    grouped = review.groupby('activity_id', dropna=False)
+    rows = []
+    for activity_id, group in grouped:
+        status_counts = _exercise_review_status_counts(group['review_status'])
+        date = group['date'].iloc[0] if 'date' in group.columns else None
+        name = group['name'].iloc[0] if 'name' in group.columns else None
+        rows.append({
+            'activity_id': activity_id,
+            'date': date,
+            'name': name,
+            'total_sets': int(len(group)),
+            **status_counts,
+        })
+    activities = pd.DataFrame(rows)
+    activities = activities.sort_values(['pending', 'date'], ascending=[False, False])
+
+    return {
+        'activities': _timeseries_records(activities),
+        'counts': _exercise_review_status_counts(review['review_status']),
+    }
+
+
+def _exercise_review_activity_detail_payload(activity_id: str, source: str = 'local') -> dict | None:
+    """Every set in one strength activity, in set-number order, for the
+    per-activity review screen (edit an individual set's exercise label,
+    then submit the whole session's currently-pending sets as approved).
+    """
+    store = curated_s3 if source == 's3' else curated_local
+    review = _load_exercise_review_with_context(store)
+    if review.empty:
+        return None
+
+    activity_review = review[review['activity_id'].astype(str) == str(activity_id)]
+    if activity_review.empty:
+        return None
+    activity_review = activity_review.sort_values('set_number')
+
+    date_value = activity_review['date'].iloc[0] if 'date' in activity_review.columns else None
+    return {
+        'activity_id': str(activity_id),
+        'date': pd.Timestamp(date_value).date().isoformat() if pd.notnull(date_value) else None,
+        'name': activity_review['name'].iloc[0] if 'name' in activity_review.columns else None,
+        'sets': _timeseries_records(activity_review),
+    }
+
+
+def _exercise_review_options() -> list[dict[str, str]]:
+    """Canonical exercise-name options for the review UI's edit dropdown --
+    every exercise EXERCISE_MUSCLES knows how to map to a muscle heatmap,
+    sorted by display label.
+    """
+    options = [{'value': name, 'label': format_exercise_label(name)} for name in EXERCISE_MUSCLES]
+    options.append({'value': 'unknown', 'label': format_exercise_label('unknown')})
+    return sorted(options, key=lambda o: o['label'])
 
 
 def _mock_activity_detail() -> dict:
@@ -1117,6 +1559,201 @@ def api_recommend():
 @bp.route('/data_status')
 def data_status():
     return render_template('data_status.html', active_section='data_status')
+
+
+@bp.route('/exercise_review')
+def exercise_review():
+    return render_template('exercise_review.html', active_section='exercise_review')
+
+
+@bp.route('/modeling')
+def modeling():
+    return render_template('modeling.html', active_section='modeling')
+
+
+@bp.route('/api/model_report_data')
+def api_model_report_data():
+    """Evidence behind the strength/wellness modeling work.
+
+    Read-only like every other page: the report is assembled offline by
+    garmin.analysis.model_report.build_model_report and cached, because
+    several sections scan every per-activity strength file, which is far too
+    expensive to do per request against S3.
+    """
+    import traceback
+
+    source = request.args.get('source', DEFAULT_SOURCE)
+    if source not in {'local', 's3'}:
+        source = DEFAULT_SOURCE
+
+    try:
+        store = curated_s3 if source == 's3' else curated_local
+        # The cache key carries the source suffix, matching what
+        # manual_build_viewer_cache writes (model_report_local.json). Without
+        # it this looked for model_report.json, missed every time, and rebuilt
+        # the whole report live on each request -- 3-5s per page load.
+        payload = _cached_or_live(
+            f'model_report_{source}', source, lambda: build_model_report(store)
+        )
+        return jsonify(payload or {})
+    except Exception as e:
+        print(f"Error loading model report: {e}")
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/api/exercise_review_activities')
+def api_exercise_review_activities():
+    import traceback
+
+    source = request.args.get('source', DEFAULT_SOURCE)
+    if source not in {'local', 's3'}:
+        source = DEFAULT_SOURCE
+
+    try:
+        payload = _exercise_review_activities_payload(source=source)
+        if payload is None:
+            payload = {'activities': [], 'counts': {'pending': 0, 'accepted': 0, 'rejected': 0, 'garmin_confirmed': 0}}
+        return jsonify(payload)
+    except Exception as e:
+        print(f"Error loading exercise review activities: {e}")
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/api/exercise_review_activity')
+def api_exercise_review_activity():
+    import traceback
+
+    source = request.args.get('source', DEFAULT_SOURCE)
+    if source not in {'local', 's3'}:
+        source = DEFAULT_SOURCE
+    activity_id = request.args.get('activity_id')
+    if not activity_id:
+        return jsonify({'error': 'activity_id is required'}), 400
+
+    try:
+        payload = _exercise_review_activity_detail_payload(activity_id, source=source)
+        if payload is None:
+            return jsonify({'error': 'activity not found'}), 404
+        return jsonify(payload)
+    except Exception as e:
+        print(f"Error loading exercise review activity detail: {e}")
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/api/exercise_review_options')
+def api_exercise_review_options():
+    return jsonify({'options': _exercise_review_options()})
+
+
+@bp.route('/api/exercise_review_decision', methods=['POST'])
+def api_exercise_review_decision():
+    """Write endpoint for a single set's review decision -- used by the
+    per-row Reject action. Everywhere else in this app is read-only
+    precomputed output, but a review decision has to happen live, in
+    response to a click; there's no way to precompute a user's own
+    judgment call offline. Rewrites the whole (small, ~9K row)
+    exercise_review.parquet -- fine at this account's scale, not meant to
+    hold up under concurrent writers.
+    """
+    import traceback
+
+    data = request.get_json(silent=True) or {}
+    source = data.get('source', DEFAULT_SOURCE)
+    if source not in {'local', 's3'}:
+        source = DEFAULT_SOURCE
+    decision = data.get('decision')
+    if decision not in {'accept', 'reject'}:
+        return jsonify({'error': "decision must be 'accept' or 'reject'"}), 400
+    exercise = data.get('exercise')
+
+    try:
+        activity_id = str(data.get('activity_id'))
+        set_number = int(data.get('set_number'))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'activity_id and set_number are required'}), 400
+
+    try:
+        store = curated_s3 if source == 's3' else curated_local
+        review = store.load_exercise_review('strength')
+        if review.empty:
+            return jsonify({'error': 'no review data found'}), 404
+
+        mask = (review['activity_id'].astype(str) == activity_id) & (review['set_number'] == set_number)
+        if not mask.any():
+            return jsonify({'error': 'set not found'}), 404
+
+        if decision == 'accept':
+            if exercise:
+                review.loc[mask, 'our_guess_exercise'] = exercise
+            review.loc[mask, 'review_status'] = 'accepted'
+        else:
+            review.loc[mask, 'review_status'] = 'rejected'
+        store.write_exercise_review('strength', review)
+        return jsonify({'status': 'ok'})
+    except Exception as e:
+        print(f"Error saving exercise review decision: {e}")
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/api/exercise_review_submit_activity', methods=['POST'])
+def api_exercise_review_submit_activity():
+    """Batch write: approves every listed set in one activity in a single
+    parquet rewrite (one row per edited/confirmed set from the per-
+    activity review screen's 'Submit as Approved' button), instead of one
+    request per set. Only touches sets that are still 'pending' -- a set
+    a user already explicitly accepted/rejected via the single-decision
+    endpoint is left alone even if it's included in the batch (defensive:
+    the frontend shouldn't include already-decided rows, but a stale page
+    load could).
+    """
+    import traceback
+
+    data = request.get_json(silent=True) or {}
+    source = data.get('source', DEFAULT_SOURCE)
+    if source not in {'local', 's3'}:
+        source = DEFAULT_SOURCE
+    activity_id = str(data.get('activity_id') or '')
+    items = data.get('items')
+    if not activity_id or not isinstance(items, list) or not items:
+        return jsonify({'error': 'activity_id and a non-empty items list are required'}), 400
+
+    try:
+        store = curated_s3 if source == 's3' else curated_local
+        review = store.load_exercise_review('strength')
+        if review.empty:
+            return jsonify({'error': 'no review data found'}), 404
+
+        updated = 0
+        for item in items:
+            try:
+                set_number = int(item.get('set_number'))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            exercise = item.get('exercise') if isinstance(item, dict) else None
+            if not exercise:
+                continue
+            mask = (
+                (review['activity_id'].astype(str) == activity_id)
+                & (review['set_number'] == set_number)
+                & (review['review_status'] == 'pending')
+            )
+            if not mask.any():
+                continue
+            review.loc[mask, 'our_guess_exercise'] = exercise
+            review.loc[mask, 'review_status'] = 'accepted'
+            updated += mask.sum()
+
+        if updated:
+            store.write_exercise_review('strength', review)
+        return jsonify({'status': 'ok', 'updated': int(updated)})
+    except Exception as e:
+        print(f"Error submitting exercise review activity: {e}")
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
 
 
 @bp.route('/muscle_explorer')

@@ -21,9 +21,11 @@
                 <button type="button" data-days="7">7D</button>
                 <button type="button" data-days="30">30D</button>
                 <button type="button" data-days="90">90D</button>
-                <button type="button" data-days="180" class="active">180D</button>
+                <button type="button" data-days="180">180D</button>
                 <button type="button" data-days="365">1Y</button>
                 <button type="button" data-days="730">2Y</button>
+                <button type="button" data-days="1825" class="active">5Y</button>
+                <button type="button" data-days="all">All</button>
                 <button type="button" data-days="custom">Custom</button>
             </div>
         </label>
@@ -91,13 +93,12 @@
         <span class="status-line" id="lifting-status-line">Loading…</span>
     </div>
 
-    <div class="metric-row">
-        <div class="card chart-card">
-            <div class="section-heading">Top Set Weight Progression</div>
-            <div class="chart-host" id="lift-weight-chart"></div>
-        </div>
-        <div class="card stat-panel" id="lift-weight-stats"></div>
-    </div>
+    <div class="status-line" id="lift-view-note" style="margin: 4px 0 12px;"></div>
+
+    <!-- One card per movement, built in JS. Each carries its own chart, its
+         headline number, and the conversion factors behind it -- the numbers
+         belong next to the plot they describe, not in a separate column. -->
+    <div class="lift-grid" id="lift-movement-grid"></div>
 
     <div class="metric-row">
         <div class="card chart-card">
@@ -129,17 +130,40 @@
     </div>
 </div>
 
-<script>
-function token(name) {
-    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+<style>
+.lift-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
 }
+@media (max-width: 1100px) {
+    .lift-grid { grid-template-columns: minmax(0, 1fr); }
+}
+.lift-card-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    gap: 12px; margin-bottom: 2px;
+}
+.lift-headline { font-size: 20px; font-weight: 600; color: var(--lg-text); }
+.lift-delta { font-size: 12px; }
+.lift-meta {
+    margin-top: 8px; padding-top: 8px;
+    border-top: 1px solid var(--lg-border);
+    font-size: 11.5px; color: var(--lg-text-2); line-height: 1.5;
+}
+.lift-meta table { border-collapse: collapse; width: 100%; }
+.lift-meta td { padding: 2px 8px 2px 0; }
+.lift-meta td.num { text-align: right; font-variant-numeric: tabular-nums; }
+</style>
+<script>
+// token() is defined once in static/js/tokens.js -- it resolves color-mix()
+// tokens that getPropertyValue would otherwise return unparsed.
 
 function coerceDate(value) {
     return value ? new Date(value + 'T00:00:00') : null;
 }
 
 const fitnessState = {
-    rangeDays: 180,
+    rangeDays: 1825,
     customStart: null,
     customEnd: null,
     running: null,
@@ -148,10 +172,10 @@ const fitnessState = {
 
 const loadedSports = new Set();
 
-document.getElementById('sport-tabs').addEventListener('click', (event) => {
-    const button = event.target.closest('button[data-sport]');
-    if (!button) return;
-    const sport = button.dataset.sport;
+function selectSport(sport) {
+    const button = document.querySelector(`#sport-tabs button[data-sport="${sport}"]`);
+    const pane = document.getElementById('pane-' + sport);
+    if (!button || !pane) return;
 
     document.querySelectorAll('#sport-tabs button').forEach((b) => {
         b.classList.remove('active');
@@ -160,14 +184,33 @@ document.getElementById('sport-tabs').addEventListener('click', (event) => {
     button.classList.add('active');
     button.setAttribute('aria-selected', 'true');
 
-    document.querySelectorAll('.tab-pane').forEach((pane) => pane.classList.remove('active'));
-    document.getElementById('pane-' + sport).classList.add('active');
+    document.querySelectorAll('.tab-pane').forEach((p) => p.classList.remove('active'));
+    pane.classList.add('active');
 
     if ((sport === 'running' || sport === 'lifting') && !loadedSports.has(sport)) {
         loadedSports.add(sport);
         loadSport(sport);
     }
+}
+
+document.getElementById('sport-tabs').addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-sport]');
+    if (button) selectSport(button.dataset.sport);
 });
+
+// Deep links: /fitness?sport=lifting&view=relative opens straight to that
+// sport and progression view, so a particular chart can be bookmarked or
+// shared rather than only reached by clicking through.
+(function applyDeepLink() {
+    const params = new URLSearchParams(window.location.search);
+    const range = params.get('range');
+    if (range) {
+        const button = document.querySelector(`#range-group button[data-days="${range}"]`);
+        if (button) button.click();
+    }
+    const sport = params.get('sport');
+    if (sport) selectSport(sport);
+})();
 
 async function loadSport(sport) {
     try {
@@ -195,6 +238,7 @@ function filterByRange(rows, anchorDate, dateKey) {
             return true;
         });
     }
+    if (fitnessState.rangeDays === 'all') return rows;
     const startDate = new Date(anchorDate);
     startDate.setDate(startDate.getDate() - fitnessState.rangeDays);
     return rows.filter((r) => {
@@ -308,7 +352,7 @@ function renderAnalyzedChart(chartElementId, outlierElementId, analyzed, metricK
         traces.push({
             x: trend.map((t) => t.date).concat(trend.map((t) => t.date).slice().reverse()),
             y: trend.map((t) => t.upper_68).concat(trend.map((t) => t.lower_68).slice().reverse()),
-            type: 'scatter', mode: 'lines', fill: 'toself', fillcolor: color + '33',
+            type: 'scatter', mode: 'lines', fill: 'toself', fillcolor: withAlpha(color, 0.2),
             line: { color: 'transparent' }, hoverinfo: 'skip', showlegend: false, name: '68% interval',
         });
     }
@@ -389,15 +433,188 @@ const LIFT_CHART_PALETTE = ['--lg-gold', '--lg-highlight', '--lg-success', '--lg
 const LIFT_CHART_MAX_EXERCISES = 6;
 
 function exerciseLabel(key) {
-    return key.split('_').map((w) => w[0].toUpperCase() + w.slice(1)).join(' ');
+    // Variants arrive either as Garmin's UPPER_SNAKE movement names or as
+    // "<category>__unassigned" for sets that were never labelled.
+    if (key.endsWith('__unassigned') || key.endsWith('__unlabelled')) {
+        const base = key.replace(/__(unassigned|unlabelled)$/, '');
+        return titleCase(base) + ' (unlabelled)';
+    }
+    return titleCase(key);
+}
+function titleCase(key) {
+    return key.toLowerCase().split('_').filter(Boolean)
+        .map((w) => w[0].toUpperCase() + w.slice(1)).join(' ');
+}
+function familyLabel(key) { return titleCase(key); }
+
+// The five movements worth tracking. Everything else analyze_lifting produces
+// is still written and still available -- this is a display choice about what
+// answers "am I getting stronger", not a claim the rest is worthless.
+const LIFT_FOCUS_FAMILIES = [
+    'flat_bench_press',
+    'squat',
+    'deadlift',
+    'overhead_press',
+    'overhead_triceps_extension',
+];
+
+const LIFT_INTRO_NOTE =
+    'One panel per movement. Each variant\u2019s sets are converted onto a common scale by a '
+    + 'factor fitted from periods when they were trained alongside each other, so a switch of '
+    + 'implement doesn\u2019t read as a change in strength. Points are coloured by variant; the '
+    + 'line and bands are the structural time-series fit (68% and 95% credible intervals), the '
+    + 'same model the Health trends use.';
+
+// Points/trend for an exercise carry different value columns depending on
+// load type (est_1rm in lb, or top_reps for bodyweight exercises), so the
+// column name comes from the payload rather than being hardcoded.
+function liftSeries(exercise, anchorDate) {
+    const points = filterByRange(exercise.points, anchorDate).filter((p) => p.quality_tier !== 'hard');
+    const trend = filterByRange(exercise.trend, anchorDate);
+    return { points, trend, valueKey: exercise.value_key || 'est_1rm' };
+}
+
+/**
+ * One movement: converted per-variant scatter, plus the combined trend with
+ * its uncertainty bands.
+ */
+function renderMovementChart(hostId, family, entry, payload, anchorDate, colorIndex) {
+    const factors = Object.fromEntries(
+        (entry.factors || []).filter(f => f.identified).map(f => [f.variant, f.factor])
+    );
+    const variants = (payload.families[family] || []).filter(v => factors[v] !== undefined);
+    const traces = [];
+
+    // Scatter, one colour per variant, each scaled onto the reference scale.
+    variants.forEach((variant, idx) => {
+        const exercise = payload.exercises[variant];
+        if (!exercise) return;
+        const { points, valueKey } = liftSeries(exercise, anchorDate);
+        if (!points.length) return;
+        const color = token(LIFT_CHART_PALETTE[idx % LIFT_CHART_PALETTE.length]);
+        const factor = factors[variant];
+        const links = payload.session_links || {};
+        traces.push({
+            x: points.map(p => p.date),
+            y: points.map(p => p[valueKey] * factor),
+            type: 'scatter', mode: 'markers',
+            marker: { color, size: 5, opacity: 0.45 },
+            name: exerciseLabel(variant),
+            // Carries the session id so a click can open the workout behind
+            // the point -- the quickest way to check whether a surprising
+            // value is real or a mislabelled set.
+            customdata: points.map(p => links[p.date] || null),
+            hovertemplate: `${exerciseLabel(variant)}<br>%{x}: %{y:.0f} lb`
+                + (factor === 1 ? '' : ` (\u00d7${factor.toFixed(2)})`)
+                + '<br><i>click to open session</i><extra></extra>',
+        });
+    });
+
+    // Combined trend with 95% dotted edges and a shaded 68% band, matching
+    // how the Health tab renders its structural fit.
+    const trend = filterByRange(entry.trend, anchorDate);
+    const trendColor = token('--lg-text');
+    if (trend.length) {
+        const xs = trend.map(t => t.date);
+        traces.push({
+            x: xs.concat(xs.slice().reverse()),
+            y: trend.map(t => t.upper_68).concat(trend.map(t => t.lower_68).reverse()),
+            type: 'scatter', mode: 'lines', fill: 'toself',
+            fillcolor: withAlpha(trendColor, 0.16), line: { color: 'transparent' },
+            hoverinfo: 'skip', showlegend: false,
+        });
+        [['upper_95', 'upper'], ['lower_95', 'lower']].forEach(([key]) => {
+            traces.push({
+                x: xs, y: trend.map(t => t[key]),
+                type: 'scatter', mode: 'lines',
+                line: { color: trendColor, width: 1, dash: 'dot' },
+                hoverinfo: 'skip', showlegend: false,
+            });
+        });
+        traces.push({
+            x: xs, y: trend.map(t => t.mean),
+            type: 'scatter', mode: 'lines',
+            line: { color: trendColor, width: 2.5 },
+            name: 'Combined trend',
+            hovertemplate: '%{x}: %{y:.0f} lb<extra></extra>',
+        });
+    }
+
+    // A single mis-logged set (bench has one at ~480 lb, more than double
+    // anything around it) otherwise dictates the whole axis and squashes the
+    // real signal into the bottom third. Frame on the trend band and the bulk
+    // of the points, and let genuine outliers sit outside the view rather
+    // than rescaling everything to accommodate them.
+    const scatterY = traces
+        .filter(t => t.mode === 'markers')
+        .flatMap(t => t.y)
+        .filter(Number.isFinite)
+        .sort((a, b) => a - b);
+    const layoutExtra = {
+        height: 300,
+        margin: { l: 54, r: 14, t: 6, b: 34 },
+        showlegend: true,
+        legend: { orientation: 'h', y: -0.22, font: { size: 10 } },
+    };
+    if (scatterY.length > 20 && trend.length) {
+        const q = (p) => scatterY[Math.min(scatterY.length - 1, Math.floor(p * scatterY.length))];
+        const lo = Math.min(q(0.01), ...trend.map(t => t.lower_95));
+        const hi = Math.max(q(0.99), ...trend.map(t => t.upper_95));
+        const pad = Math.max((hi - lo) * 0.08, 2);
+        layoutExtra.yaxis = { range: [lo - pad, hi + pad], autorange: false };
+    }
+
+    const host = document.getElementById(hostId);
+    host.style.height = '300px';
+    const layout = baseLayout('Estimated 1RM (lb)', layoutExtra);
+    if (layoutExtra.yaxis) {
+        layout.yaxis = Object.assign({}, layout.yaxis, layoutExtra.yaxis);
+    }
+    Plotly.newPlot(host, traces, layout, { responsive: true, displaylogo: false });
+
+    host.on('plotly_click', (event) => {
+        const point = event.points && event.points[0];
+        const activityId = point && point.customdata;
+        if (activityId) {
+            window.open('/activities?activity_id=' + encodeURIComponent(activityId), '_blank');
+        }
+    });
+}
+
+/** The conversion factors behind one movement's combined series. */
+function movementMetaHtml(entry) {
+    // Factors are relative to the *display* variant, which is not always the
+    // fitting anchor -- labelling these rows with the anchor showed the
+    // display variant sitting at x1.00 against itself.
+    const scale = entry.display_variant || entry.reference;
+    const rows = (entry.factors || []).filter(f => f.variant !== scale);
+    if (!rows.length) {
+        return `<div class="lift-meta">Single variant (${exerciseLabel(scale)}) \u2014 no conversion needed.</div>`;
+    }
+    const body = rows.map((f) => `<tr>
+        <td>${exerciseLabel(f.variant)}</td>
+        <td class="num">\u00d7${f.factor.toFixed(2)}</td>
+        <td class="num">${f.paired_ratio === null ? '\u2014' : '\u00d7' + f.paired_ratio.toFixed(2)}</td>
+        <td>${f.identified
+            ? '<span style="color: var(--lg-success);">used</span>'
+            : '<span style="color: var(--lg-warning);">excluded</span>'}</td>
+    </tr>`).join('');
+    return `<div class="lift-meta">
+        <div style="margin-bottom: 4px;">Converted to <strong>${exerciseLabel(scale)}</strong> scale
+            <span style="opacity: .7;">(fitted / cross-check)</span></div>
+        <table><tbody>${body}</tbody></table>
+    </div>`;
 }
 
 function renderLifting() {
     const payload = fitnessState.lifting;
     if (!payload) return;
     setMockStatus('lifting-mock-badge', 'lifting-status-line', payload.mock);
+    document.getElementById('lift-view-note').textContent = LIFT_INTRO_NOTE;
+
     const exercises = payload.exercises;
     const exerciseOrder = payload.exercise_order || Object.keys(exercises);
+    const combined = payload.combined || {};
 
     let anchorDate = null;
     Object.values(exercises).forEach(({ trend }) => {
@@ -408,42 +625,49 @@ function renderLifting() {
     });
     if (!anchorDate) anchorDate = new Date();
 
-    // Chart stays readable with only the most-trained exercises; the stat
-    // panel below lists every exercise that cleared analyze_lifting's
-    // session-count threshold, not just the ones charted.
-    const traces = [];
-    exerciseOrder.slice(0, LIFT_CHART_MAX_EXERCISES).forEach((key, idx) => {
-        const { points, trend } = exercises[key];
-        const color = token(LIFT_CHART_PALETTE[idx % LIFT_CHART_PALETTE.length]);
-        const visiblePoints = filterByRange(points, anchorDate).filter((p) => p.quality_tier !== 'hard');
-        const visibleTrend = filterByRange(trend, anchorDate);
-        traces.push({
-            x: visiblePoints.map(p => p.date), y: visiblePoints.map(p => p.est_1rm),
-            type: 'scatter', mode: 'markers',
-            marker: { color, size: 4, opacity: visiblePoints.map(p => p.quality_tier === 'soft' ? 0.25 : 0.4) },
-            name: exerciseLabel(key), showlegend: false,
-        });
-        traces.push({
-            x: visibleTrend.map(t => t.date), y: visibleTrend.map(t => t.mean),
-            type: 'scatter', mode: 'lines', line: { color, width: 2.5 },
-            name: exerciseLabel(key), showlegend: true,
-        });
-    });
-    Plotly.newPlot('lift-weight-chart', traces, baseLayout('Estimated 1RM (lb)', { showlegend: true, legend: { orientation: 'h', y: -0.2 } }), { responsive: true, displaylogo: false });
+    // Keep the requested order rather than sorting by volume: this is a fixed
+    // set of movements the user asked to watch, so a card shouldn't move
+    // position just because a different lift was trained more this month.
+    const families = LIFT_FOCUS_FAMILIES.filter(f => combined[f] && (combined[f].trend || []).length);
 
-    const weightStatItems = exerciseOrder.map((key) => {
-        const { trend, sessions } = exercises[key];
-        if (!trend.length) return { label: exerciseLabel(key), value: '—', trendText: `${sessions} sessions` };
-        const last30 = windowAvg(trend, 'mean', 30, 0, anchorDate);
-        const prior30 = windowAvg(trend, 'mean', 60, 30, anchorDate);
-        const trendInfo = trendMeta(last30, prior30, 'higher');
-        const latest = trend[trend.length - 1].mean;
-        return {
-            label: exerciseLabel(key), value: Math.round(latest) + ' lb (est. 1RM)',
-            trendText: trendInfo.text, trendColor: trendInfo.color,
-        };
+    const grid = document.getElementById('lift-movement-grid');
+    grid.innerHTML = families.map((family, i) => `
+        <div class="card chart-card">
+            <div class="lift-card-head">
+                <span class="section-heading" style="margin: 0;">${familyLabel(family)}</span>
+                <span><span class="lift-headline" id="lift-head-${i}">—</span>
+                      <span class="lift-delta" id="lift-delta-${i}"></span></span>
+            </div>
+            <div class="chart-host" id="lift-chart-${i}"></div>
+            ${movementMetaHtml(combined[family])}
+        </div>`).join('');
+
+    if (!families.length) {
+        grid.innerHTML = '<div class="card placeholder-card"><div class="placeholder-note">'
+            + 'No combined movement series yet — run the analyzer to build them.</div></div>';
+    }
+
+    families.forEach((family, i) => {
+        const entry = combined[family];
+        renderMovementChart(`lift-chart-${i}`, family, entry, payload, anchorDate, i);
+
+        const trend = entry.trend || [];
+        const latest = trend.length ? trend[trend.length - 1] : null;
+        if (latest) {
+            // The band is the 68% credible interval from the same structural
+            // fit that draws the shaded region, so the headline carries the
+            // model's own uncertainty rather than a bare point estimate.
+            const band = Math.round((latest.upper_68 - latest.lower_68) / 2);
+            document.getElementById(`lift-head-${i}`).textContent =
+                `${Math.round(latest.mean)} ±${band} lb`;
+            const last30 = windowAvg(trend, 'mean', 30, 0, anchorDate);
+            const prior30 = windowAvg(trend, 'mean', 60, 30, anchorDate);
+            const info = trendMeta(last30, prior30, 'higher');
+            const delta = document.getElementById(`lift-delta-${i}`);
+            delta.textContent = info.text;
+            delta.style.color = info.color;
+        }
     });
-    renderStatPanel('lift-weight-stats', weightStatItems);
 
     const freq = filterByRange(payload.weekly_frequency, anchorDate);
     const weeks = [...new Set(freq.map(r => r.date))].sort();
@@ -480,6 +704,7 @@ function renderActiveSport() {
     if (fitnessState.lifting) renderLifting();
 }
 
+
 function setDefaultCustomRange() {
     const anchor = (fitnessState.running && fitnessState.running.runs.length)
         ? fitnessState.running.runs
@@ -507,7 +732,9 @@ document.getElementById('range-group').addEventListener('click', (event) => {
         fitnessState.customStart = document.getElementById('custom-start-date').value;
         fitnessState.customEnd = document.getElementById('custom-end-date').value;
     } else {
-        fitnessState.rangeDays = Number(days);
+        // 'all' stays a string sentinel -- Number('all') is NaN, which would
+        // make every date comparison false and silently empty the charts.
+        fitnessState.rangeDays = days === 'all' ? 'all' : Number(days);
         document.getElementById('custom-range-row').style.display = 'none';
     }
     renderActiveSport();

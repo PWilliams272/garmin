@@ -29,6 +29,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Cap the number of activities fetched per dataset this run (useful for "
         "spot-checking or working around a session timeout/rate limit in chunks).",
     )
+    parser.add_argument(
+        "--dataset",
+        default=None,
+        help="Only backfill this one dataset (e.g. 'strength') instead of every "
+        "registered activity type.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-fetch every activity_id even if a detail file already exists -- for "
+        "when detail_fn's output schema changed, not just filling gaps.",
+    )
     return parser
 
 
@@ -38,7 +50,9 @@ def main(argv: list[str] | None = None):
     file_manager = FileManager(environment="aws" if args.storage_target == "s3" else "local")
     curated_store = CuratedDataStore(file_manager=file_manager)
     updater = DataUpdater(session=session, curated_store=curated_store)
-    updater.backfill_all_activity_details(limit_per_dataset=args.limit_per_dataset)
+    updater.backfill_all_activity_details(
+        limit_per_dataset=args.limit_per_dataset, only_dataset=args.dataset, force=args.force,
+    )
 
 
 if __name__ == "__main__":

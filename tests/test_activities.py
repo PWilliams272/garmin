@@ -331,6 +331,30 @@ def test_backfill_activity_details_is_resumable_noop_when_all_present(tmp_path) 
     assert result == {"dataset": "running", "total": 1, "already_had_detail": 1, "fetched": 0, "empty": 0}
 
 
+def test_backfill_activity_details_force_refetches_even_with_existing_file(tmp_path) -> None:
+    store = CuratedDataStore(file_manager=FileManager(environment="local", local_dir=str(tmp_path)))
+    store.merge_activity_summary(
+        "running", pd.DataFrame([{"activity_id": "1", "date": "2024-06-01", "duration_min": 45.0}])
+    )
+    store.write_activity_detail(
+        "running_timeseries", "1", pd.DataFrame([{"timestamp": "2024-06-01T08:00:00", "speed_mph": 6.0}])
+    )
+    updater = DataUpdater(session=object(), db_manager=object(), curated_store=store)
+
+    detail_calls: list[str] = []
+
+    def detail_fn(activity_id):
+        detail_calls.append(activity_id)
+        return pd.DataFrame([{"timestamp": "2024-06-01T08:00:00", "speed_mph": 7.5}])
+
+    result = updater.backfill_activity_details("running", detail_fn, "running_timeseries", force=True)
+
+    assert detail_calls == ["1"]
+    assert result == {"dataset": "running", "total": 1, "already_had_detail": 0, "fetched": 1, "empty": 0}
+    refreshed = store.load_activity_detail("running_timeseries", "1")
+    assert refreshed.iloc[0]["speed_mph"] == 7.5
+
+
 def test_update_activity_curated_resumes_from_last_date(tmp_path) -> None:
     store = CuratedDataStore(file_manager=FileManager(environment="local", local_dir=str(tmp_path)))
     store.merge_activity_summary(
@@ -422,15 +446,18 @@ class _FakeFitFile:
     ~100KB+ binary file into the repo.
     """
 
-    def __init__(self, sport: str, records: list[dict]) -> None:
+    def __init__(self, sport: str, records: list[dict], sets: list[dict] | None = None) -> None:
         self._sport = sport
         self._records = [_FakeFitRecord(r) for r in records]
+        self._sets = [_FakeFitRecord(s) for s in (sets or [])]
 
     def get_messages(self, kind: str):
         if kind == "session":
             return [_FakeFitRecord({"sport": self._sport})]
         if kind == "record":
             return self._records
+        if kind == "set":
+            return self._sets
         return []
 
 
@@ -503,6 +530,77 @@ def test_get_activity_fit_timeseries_returns_empty_when_no_fit_file(monkeypatch)
     monkeypatch.setattr(puller, "download_activity_fit", lambda activity_id: None)
 
     assert puller.get_activity_fit_timeseries("123").empty
+
+
+class StubExerciseSetsSession:
+    """Returns a fixed /exerciseSets response for any activity-detail call."""
+
+    def __init__(self, exercise_sets_response: dict) -> None:
+        self.response = exercise_sets_response
+
+    def get(self, url: str):
+        if "exerciseSets" in url:
+            return self.response
+        return None
+
+
+def test_get_strength_workout_aligns_by_position_not_message_index(monkeypatch) -> None:
+    """Regression test: a real activity was found (2026-08-04) where every
+    set's messageIndex in the JSON response was None, which broke the
+    original messageIndex-keyed lookup against the FIT file's own `set`
+    messages and silently dropped rest/HR for the whole activity. Position-
+    based alignment (Nth active JSON set <-> Nth active FIT set) has to
+    work even when messageIndex is missing/None throughout."""
+    exercise_sets_response = {
+        "exerciseSets": [
+            {
+                "setType": "ACTIVE", "messageIndex": None, "duration": 40.0,
+                "repetitionCount": 8, "weight": 61250.0, "startTime": "2024-06-01T18:00:00.0",
+                "exercises": [{"category": "BENCH_PRESS", "name": None, "probability": 100.0}],
+            },
+            {
+                "setType": "ACTIVE", "messageIndex": None, "duration": 35.0,
+                "repetitionCount": 6, "weight": 70312.0, "startTime": "2024-06-01T18:02:00.0",
+                "exercises": [
+                    {"category": "BENCH_PRESS", "name": None, "probability": 55.0},
+                    {"category": "SHOULDER_PRESS", "name": None, "probability": 55.0},
+                ],
+            },
+        ]
+    }
+    fit_sets = [
+        {"set_type": "active", "start_time": pd.Timestamp("2024-06-01 18:00:00"), "duration": 40.0},
+        {"set_type": "rest", "start_time": pd.Timestamp("2024-06-01 18:00:40"), "duration": 80.0},
+        {"set_type": "active", "start_time": pd.Timestamp("2024-06-01 18:02:00"), "duration": 35.0},
+    ]
+    fit_records = [
+        {"timestamp": pd.Timestamp("2024-06-01 18:00:00"), "heart_rate": 90},
+        {"timestamp": pd.Timestamp("2024-06-01 18:00:20"), "heart_rate": 100},
+        {"timestamp": pd.Timestamp("2024-06-01 18:00:40"), "heart_rate": 110},
+        {"timestamp": pd.Timestamp("2024-06-01 18:02:00"), "heart_rate": 95},
+        {"timestamp": pd.Timestamp("2024-06-01 18:02:35"), "heart_rate": 105},
+    ]
+
+    puller = ActivityPuller(StubExerciseSetsSession(exercise_sets_response))
+    monkeypatch.setattr(puller, "download_activity_fit", lambda activity_id: b"fake-fit-bytes")
+    monkeypatch.setattr(
+        fitparse, "FitFile",
+        lambda source: _FakeFitFile("strength_training", fit_records, sets=fit_sets),
+    )
+
+    df = puller.get_strength_workout("999")
+
+    assert len(df) == 2
+    # First set has no preceding rest; second's rest comes from the FIT
+    # rest set's real duration, found by position despite messageIndex=None.
+    assert pd.isna(df.iloc[0]["rest_before_s"])
+    assert df.iloc[1]["rest_before_s"] == 80.0
+    # HR windowed from each set's own FIT-native start/duration.
+    assert df.iloc[0]["hr_avg"] == pytest.approx((90 + 100 + 110) / 3, abs=0.1)
+    assert df.iloc[1]["hr_avg"] == pytest.approx((95 + 105) / 2, abs=0.1)
+    # Single-candidate-at-100 -> manually reviewed; multi-candidate -> not.
+    assert bool(df.iloc[0]["manually_reviewed"]) is True
+    assert bool(df.iloc[1]["manually_reviewed"]) is False
 
 
 def test_get_activity_detail_timeseries_prefers_fit_over_json(monkeypatch) -> None:

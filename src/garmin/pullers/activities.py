@@ -130,7 +130,36 @@ class ActivityPuller:
         return pd.DataFrame(rows)
 
     def get_strength_workout(self, activity_id: str) -> pd.DataFrame:
-        """Per-set detail for one strength_training activity: exercise, reps, weight."""
+        """Per-set detail for one strength_training activity: exercise
+        (+ up to 3 candidate guesses with confidence), reps, weight, rest
+        before the set, and avg/max heart rate during the set.
+
+        Rest and HR come from the FIT file, not the JSON exerciseSets
+        endpoint (which has no HR field at all -- confirmed live 2026-08-03,
+        the raw response only ever has exercises/duration/repetitionCount/
+        weight/setType/startTime/messageIndex). The FIT file has genuine
+        native `set` messages alternating active/rest (set_type field,
+        confirmed live) with their own precise start_time+duration, so rest
+        before a set is the preceding rest set's real duration -- not a
+        derived gap -- when the FIT file parses; falls back to no rest/HR
+        data (still exercise/reps/weight from JSON) if it doesn't.
+        HR is windowed from the FIT record stream (confirmed present and
+        fully populated for strength activities, same as running/cycling)
+        over each active set's own FIT-native start/duration.
+
+        The exercise classifier's probabilities are raw ML output, but
+        manual corrections in the Garmin app *do* leave a real signature --
+        confirmed live across 15 real recent sessions (2026-08-04): a set
+        the user edited comes back with exactly one exercise candidate at
+        probability 100, vs. an unedited/merely-"confirmed" set which keeps
+        its original multi-candidate spread (a 3-candidate set with one
+        100/two 0 entries is the classifier's own padding pattern, not an
+        edit -- distinguished by candidate *count*, not just the top
+        probability). Exposed as `manually_reviewed`. The single-candidate
+        case also often carries a specific `name` (e.g.
+        CABLE_OVERHEAD_TRICEPS_EXTENSION vs. the coarser TRICEPS_EXTENSION
+        category) -- captured as `exercise_name` when present.
+        """
         url = f"/activity-service/activity/{activity_id}/exerciseSets"
         res = self.session.get(url)
         if not res:
@@ -140,20 +169,94 @@ class ActivityPuller:
         for s in res.get("exerciseSets") or []:
             if s.get("setType") != "ACTIVE":
                 continue
-            exercises = s.get("exercises") or []
-            category = None
-            if exercises:
-                category = max(exercises, key=lambda e: e.get("probability", 0) or 0).get("category")
+            exercises = sorted(s.get("exercises") or [], key=lambda e: e.get("probability", 0) or 0, reverse=True)
+            top = exercises[0] if exercises else {}
             weight_grams = s.get("weight")
-            rows.append({
-                "exercise": (category or "unknown").lower(),
+            row = {
+                "exercise": (top.get("category") or "unknown").lower(),
+                "exercise_name": top.get("name"),
+                "manually_reviewed": len(exercises) == 1 and (exercises[0].get("probability") or 0) >= 99.99,
                 "reps": s.get("repetitionCount"),
                 "weight_lb": round(weight_grams / GRAMS_PER_LB, 1) if weight_grams is not None else None,
                 "duration_s": s.get("duration"),
                 "set_start_time": s.get("startTime"),
                 "set_index": s.get("messageIndex"),
-            })
-        return pd.DataFrame(rows)
+            }
+            for i in range(3):
+                candidate = exercises[i] if i < len(exercises) else {}
+                row[f"candidate_{i + 1}_exercise"] = (candidate.get("category") or None) and candidate["category"].lower()
+                row[f"candidate_{i + 1}_probability"] = candidate.get("probability")
+            rows.append(row)
+        df = pd.DataFrame(rows)
+        if df.empty:
+            return df
+
+        fit_bytes = self.download_activity_fit(activity_id)
+        if not fit_bytes:
+            return df
+
+        try:
+            fitfile = fitparse.FitFile(io.BytesIO(fit_bytes))
+            all_fit_sets = sorted(fitfile.get_messages("set"), key=lambda msg: msg.get_value("start_time") or 0)
+            records = list(fitfile.get_messages("record"))
+        except fitparse.FitParseError:
+            return df
+
+        # Align by position (Nth active JSON set <-> Nth active FIT set
+        # message), not by messageIndex -- confirmed live 2026-08-04 that
+        # some activities' JSON exerciseSets response has messageIndex=None
+        # for every set (still None across all 20 sets on a real session),
+        # which silently broke lookup-by-index and left rest/HR empty for
+        # those activities even though the FIT file itself has everything.
+        # Both sources reflect the same chronological set sequence, so
+        # positional zip is exact as long as the counts agree.
+        fit_active_sets = [m for m in all_fit_sets if m.get_value("set_type") == "active"]
+        fit_rest_sets = [m for m in all_fit_sets if m.get_value("set_type") == "rest"]
+
+        record_times = pd.to_datetime(pd.Series([r.get_value("timestamp") for r in records]))
+        record_hr = pd.to_numeric(pd.Series([r.get_value("heart_rate") for r in records]), errors="coerce")
+
+        rest_before_s, hr_avg, hr_max, hr_series_t, hr_series_bpm = [], [], [], [], []
+        for position in range(len(df)):
+            fit_set = fit_active_sets[position] if position < len(fit_active_sets) else None
+            # Rest before this set is the rest interval immediately prior
+            # to it in FIT's own set sequence -- the Nth active set is
+            # preceded by the (N-1)th rest interval (no rest before the
+            # very first set).
+            rest_set = fit_rest_sets[position - 1] if 0 < position <= len(fit_rest_sets) else None
+
+            rest_before_s.append(rest_set.get_value("duration") if rest_set is not None else None)
+
+            if fit_set is not None and fit_set.get_value("start_time") and fit_set.get_value("duration"):
+                window_start = pd.Timestamp(fit_set.get_value("start_time"))
+                window_end = window_start + pd.Timedelta(seconds=float(fit_set.get_value("duration")))
+                in_window_mask = (record_times >= window_start) & (record_times <= window_end)
+                window_times = record_times[in_window_mask]
+                window_hr = record_hr[in_window_mask]
+                valid = window_hr.notna()
+                window_times, window_hr = window_times[valid], window_hr[valid]
+            else:
+                window_times, window_hr = pd.Series(dtype="datetime64[ns]"), pd.Series(dtype="float64")
+
+            hr_avg.append(round(float(window_hr.mean()), 1) if not window_hr.empty else None)
+            hr_max.append(float(window_hr.max()) if not window_hr.empty else None)
+            # Small per-set series (a typical set is well under a minute at
+            # ~1Hz) for a lightweight in-page sparkline -- offsets in
+            # seconds from the set's own start, not wall-clock timestamps.
+            if not window_times.empty:
+                offsets = (window_times - window_times.iloc[0]).dt.total_seconds().round(1).tolist()
+                hr_series_t.append(offsets)
+                hr_series_bpm.append(window_hr.tolist())
+            else:
+                hr_series_t.append([])
+                hr_series_bpm.append([])
+
+        df["rest_before_s"] = rest_before_s
+        df["hr_avg"] = hr_avg
+        df["hr_max"] = hr_max
+        df["hr_series_t"] = hr_series_t
+        df["hr_series_bpm"] = hr_series_bpm
+        return df
 
     def get_activity_gps(self, activity_id: str) -> pd.DataFrame:
         """Lat/lng (+ optional elevation/timestamp) track for one GPS-based activity.

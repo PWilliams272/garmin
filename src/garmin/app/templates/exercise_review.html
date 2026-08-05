@@ -1,0 +1,343 @@
+{% extends "base.html" %}
+{% block title %}Exercise Review — Garmin{% endblock %}
+{% block subtitle %}Review and correct Garmin's exercise guesses, session by session{% endblock %}
+{% block content %}
+<section class="card chart-card">
+    <div class="control-grid">
+        <label class="inline-select-control">
+            Data Source
+            <select id="source-select">
+                <option value="local" selected>Local Curated Files</option>
+                <option value="s3">S3 Curated Files</option>
+            </select>
+        </label>
+    </div>
+    <div class="status-line" id="review-status-line" style="margin-top: 12px;">Loading…</div>
+    <div class="status-line" id="review-counts" style="margin-top: 4px;"></div>
+</section>
+
+<div class="review-layout">
+    <section class="card chart-card review-activities-card">
+        <div class="section-heading">Sessions</div>
+        <div class="status-line" style="margin-bottom: 10px;">Sorted by how many sets still need review.</div>
+        <div id="activity-list" class="review-activity-list-scroll"></div>
+    </section>
+
+    <section class="card chart-card review-detail-card">
+        <div id="detail-empty-state" class="status-line" style="padding: 24px 0;">Select a session on the left to review its sets.</div>
+        <div id="detail-content" style="display: none;">
+            <div class="review-detail-header">
+                <div>
+                    <div class="review-detail-title" id="detail-title"></div>
+                    <div class="status-line" id="detail-subtitle"></div>
+                </div>
+                <button class="primary-button" id="submit-activity-btn">Submit as Approved</button>
+            </div>
+            <div id="detail-set-list" class="review-set-list-scroll"></div>
+        </div>
+    </section>
+</div>
+
+<style>
+.review-layout {
+    display: grid;
+    grid-template-columns: minmax(280px, 1fr) minmax(0, 2fr);
+    gap: 16px;
+    align-items: start;
+}
+@media (max-width: 900px) {
+    .review-layout { grid-template-columns: 1fr; }
+}
+.review-activity-list-scroll, .review-set-list-scroll {
+    max-height: 720px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+.activity-tile {
+    border: 1px solid var(--lg-border);
+    border-radius: var(--lg-radius-lg);
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    cursor: pointer;
+    transition: border-color 120ms ease, background 120ms ease;
+}
+.activity-tile:hover {
+    border-color: var(--lg-border-h);
+}
+.activity-tile.is-selected {
+    border-color: var(--lg-gold);
+    background: color-mix(in srgb, var(--lg-gold) 8%, transparent);
+}
+.activity-tile-top {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: var(--fs-sm);
+}
+.activity-tile-date {
+    color: var(--lg-text-2);
+    font-variant-numeric: tabular-nums;
+}
+.activity-tile-pending {
+    font-weight: 600;
+}
+.activity-tile-pending.is-zero {
+    color: var(--lg-text-3);
+    font-weight: 400;
+}
+.activity-tile-meta {
+    font-size: var(--fs-xs);
+    color: var(--lg-text-3);
+    margin-top: 2px;
+}
+.review-detail-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+.review-detail-title {
+    font-weight: 600;
+    font-size: var(--fs-md);
+}
+.set-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border: 1px solid var(--lg-border);
+    border-radius: var(--lg-radius-lg);
+    padding: 6px 10px;
+    margin-bottom: 6px;
+}
+.set-row-number {
+    font-size: var(--fs-xs);
+    color: var(--lg-text-3);
+    width: 22px;
+    flex-shrink: 0;
+    text-align: right;
+}
+.set-row-meta {
+    font-size: var(--fs-sm);
+    color: var(--lg-text-2);
+    width: 130px;
+    flex-shrink: 0;
+}
+.set-row-original {
+    font-size: var(--fs-xs);
+    color: var(--lg-text-3);
+    width: 130px;
+    flex-shrink: 0;
+}
+.set-row-select {
+    flex: 1;
+    min-width: 0;
+}
+.set-row-status {
+    font-size: var(--fs-xs);
+    padding: 1px 6px;
+    border-radius: 999px;
+    border: 1px solid;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.set-row-reject-btn {
+    flex-shrink: 0;
+}
+.set-row.is-decided .set-row-select {
+    opacity: 0.6;
+}
+</style>
+
+<script>
+// token() is defined once in static/js/tokens.js -- it resolves color-mix()
+// tokens that getPropertyValue would otherwise return unparsed.
+
+function setStatus(message) {
+    document.getElementById('review-status-line').textContent = message;
+}
+
+function statusColor(status) {
+    if (status === 'accepted' || status === 'garmin_confirmed') return '--lg-success';
+    if (status === 'rejected') return '--lg-danger';
+    return '--lg-text-2';
+}
+
+function renderCounts(counts) {
+    document.getElementById('review-counts').textContent =
+        `${counts.pending} pending · ${counts.accepted} accepted · ${counts.rejected} rejected · ${counts.garmin_confirmed} already confirmed in Garmin Connect`;
+}
+
+let exerciseOptions = [];
+let currentSource = 'local';
+let currentActivityId = null;
+
+async function loadOptions() {
+    const response = await fetch('/api/exercise_review_options');
+    const payload = await response.json();
+    exerciseOptions = payload.options || [];
+}
+
+function optionsHtml(selected) {
+    return exerciseOptions.map((opt) =>
+        `<option value="${opt.value}"${opt.value === selected ? ' selected' : ''}>${opt.label}</option>`
+    ).join('');
+}
+
+function buildActivityTile(activity) {
+    const tile = document.createElement('div');
+    tile.className = 'activity-tile';
+    tile.dataset.activityId = activity.activity_id;
+    if (activity.activity_id === currentActivityId) tile.classList.add('is-selected');
+    const pendingClass = activity.pending > 0 ? '' : ' is-zero';
+    tile.innerHTML = `
+        <div class="activity-tile-top">
+            <span class="activity-tile-date">${activity.date || 'Unknown date'}</span>
+            <span class="activity-tile-pending${pendingClass}">${activity.pending} pending</span>
+        </div>
+        <div class="activity-tile-meta">${activity.name || 'Strength'} · ${activity.total_sets} sets</div>
+    `;
+    tile.addEventListener('click', () => selectActivity(activity.activity_id));
+    return tile;
+}
+
+async function loadActivities(source) {
+    setStatus('Loading…');
+    try {
+        const response = await fetch('/api/exercise_review_activities?source=' + encodeURIComponent(source));
+        if (!response.ok) throw new Error('Failed to load sessions (' + response.status + ')');
+        const payload = await response.json();
+        if (payload.error) throw new Error(payload.error);
+
+        renderCounts(payload.counts);
+        const list = document.getElementById('activity-list');
+        list.innerHTML = '';
+        (payload.activities || []).forEach((activity) => list.appendChild(buildActivityTile(activity)));
+        if (!(payload.activities || []).length) {
+            list.innerHTML = '<div class="status-line" style="padding: 12px;">No strength sessions to review yet.</div>';
+        }
+        setStatus(`Loaded from ${source}.`);
+    } catch (error) {
+        setStatus('Error: ' + error.message);
+    }
+}
+
+function buildSetRow(set) {
+    const row = document.createElement('div');
+    row.className = 'set-row';
+    const decided = set.review_status !== 'pending';
+    if (decided) row.classList.add('is-decided');
+    const color = statusColor(set.review_status);
+    const weight = set.weight_lb === null || set.weight_lb === undefined ? '' : set.weight_lb.toFixed(1) + ' lb';
+    const meta = [set.reps ? set.reps + ' reps' : null, weight].filter(Boolean).join(' · ');
+    const selected = set.our_guess_exercise || set.original_exercise;
+    row.innerHTML = `
+        <span class="set-row-number">#${set.set_number}</span>
+        <span class="set-row-meta">${meta}</span>
+        <span class="set-row-original">was ${set.original_exercise_label || set.original_exercise}</span>
+        <select class="set-row-select" ${decided ? 'disabled' : ''}>${optionsHtml(selected)}</select>
+        <span class="set-row-status" style="color:${token(color)};border-color:${token(color)};">${set.review_status.replace('_', ' ')}</span>
+        ${decided ? '' : '<button class="ghost-button set-row-reject-btn">Reject</button>'}
+    `;
+    row.dataset.setNumber = set.set_number;
+    row.dataset.pending = decided ? 'false' : 'true';
+    if (!decided) {
+        row.querySelector('.set-row-reject-btn').addEventListener('click', () => rejectSet(set.set_number, row));
+    }
+    return row;
+}
+
+async function rejectSet(setNumber, row) {
+    row.classList.add('is-decided');
+    try {
+        const response = await fetch('/api/exercise_review_decision', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                activity_id: currentActivityId, set_number: setNumber, decision: 'reject', source: currentSource,
+            }),
+        });
+        const payload = await response.json();
+        if (payload.error) throw new Error(payload.error);
+        await selectActivity(currentActivityId);
+        await loadActivities(currentSource);
+    } catch (error) {
+        row.classList.remove('is-decided');
+        alert('Failed to reject set: ' + error.message);
+    }
+}
+
+async function submitActivity() {
+    const rows = Array.from(document.querySelectorAll('#detail-set-list .set-row')).filter(
+        (row) => row.dataset.pending === 'true'
+    );
+    if (!rows.length) {
+        alert('Nothing pending to submit in this session.');
+        return;
+    }
+    const items = rows.map((row) => ({
+        set_number: parseInt(row.dataset.setNumber, 10),
+        exercise: row.querySelector('.set-row-select').value,
+    }));
+    const btn = document.getElementById('submit-activity-btn');
+    btn.disabled = true;
+    btn.textContent = 'Submitting…';
+    try {
+        const response = await fetch('/api/exercise_review_submit_activity', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ activity_id: currentActivityId, source: currentSource, items }),
+        });
+        const payload = await response.json();
+        if (payload.error) throw new Error(payload.error);
+        await selectActivity(currentActivityId);
+        await loadActivities(currentSource);
+    } catch (error) {
+        alert('Failed to submit session: ' + error.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Submit as Approved';
+    }
+}
+
+async function selectActivity(activityId) {
+    currentActivityId = activityId;
+    document.querySelectorAll('.activity-tile').forEach((tile) => {
+        tile.classList.toggle('is-selected', tile.dataset.activityId === activityId);
+    });
+    try {
+        const response = await fetch('/api/exercise_review_activity?activity_id=' + encodeURIComponent(activityId) + '&source=' + encodeURIComponent(currentSource));
+        if (!response.ok) throw new Error('Failed to load session (' + response.status + ')');
+        const payload = await response.json();
+        if (payload.error) throw new Error(payload.error);
+
+        document.getElementById('detail-empty-state').style.display = 'none';
+        document.getElementById('detail-content').style.display = 'block';
+        document.getElementById('detail-title').textContent = `${payload.name || 'Strength'} — ${payload.date || ''}`;
+        const pendingCount = (payload.sets || []).filter((s) => s.review_status === 'pending').length;
+        document.getElementById('detail-subtitle').textContent = `${payload.sets.length} sets · ${pendingCount} pending`;
+
+        const list = document.getElementById('detail-set-list');
+        list.innerHTML = '';
+        (payload.sets || []).forEach((set) => list.appendChild(buildSetRow(set)));
+    } catch (error) {
+        setStatus('Error: ' + error.message);
+    }
+}
+
+document.getElementById('submit-activity-btn').addEventListener('click', submitActivity);
+
+document.getElementById('source-select').addEventListener('change', (event) => {
+    currentSource = event.target.value;
+    currentActivityId = null;
+    document.getElementById('detail-content').style.display = 'none';
+    document.getElementById('detail-empty-state').style.display = 'block';
+    loadActivities(currentSource);
+});
+
+(async function init() {
+    await loadOptions();
+    await loadActivities(currentSource);
+})();
+</script>
+{% endblock %}

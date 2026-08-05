@@ -1,0 +1,1444 @@
+{% extends "base.html" %}
+{% block title %}Modeling — Garmin{% endblock %}
+{% block subtitle %}A working notebook on the strength and wellness models: the plan, the maths, the data, and what does and doesn't hold up{% endblock %}
+{% block head %}
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+{% endblock %}
+{% block content %}
+
+<aside id="glossary" class="glossary" data-open="false" aria-label="Symbol definitions">
+    <button type="button" class="glossary-handle" id="gloss-toggle"
+            aria-expanded="false" aria-controls="glossary-body">
+        <span class="glossary-handle-text">Symbols</span>
+    </button>
+    <div class="glossary-body" id="glossary-body">
+        <div class="glossary-head">
+            <h4>Symbol definitions</h4>
+            <p>Hover an equation to highlight the symbols it uses. Hover a definition to find the
+               equations that use it.</p>
+        </div>
+        <div class="glossary-scroll">
+            <table class="sym-table" id="symbols"></table>
+        </div>
+    </div>
+</aside>
+
+<div class="paper-layout" id="pane">
+<div class="paper-toolbar">
+    <span class="status-line" id="report-status">Loading…</span>
+    <label class="inline-select-control">
+        Source
+        <select id="source-select">
+            <option value="local" selected>Local</option>
+            <option value="s3">S3</option>
+        </select>
+    </label>
+</div>
+
+<main class="paper-main">
+
+<!-- ══ OVERVIEW ══ -->
+<section id="overview" class="paper-section">
+    <h2>Overview</h2>
+    <p class="lede">
+        This page documents how strength progression and wellness response are modelled in this repo —
+        what the models do, what evidence motivated each choice, and where they currently fall short.
+        It is a working notebook, not a results announcement: one of the two models does not yet
+        converge, and that is stated plainly rather than hidden.
+    </p>
+
+    <div class="kpi-strip" id="overview-kpis"></div>
+
+    <div class="callout">
+        <strong>On originality.</strong> Almost everything here is standard method applied to one
+        person's data. The load–rep power law is Lombardi's; the envelope fit is Yu &amp; Moyeed's
+        Bayesian quantile regression; the latent level is a textbook local-level state space. What was
+        actually assembled here is small — mainly a data-quality trick for classifying what Garmin's
+        <code>weight</code> column means, and the particular way these standard parts are combined.
+        <a href="#provenance">Section 10</a> itemises every piece and its source.
+    </div>
+</section>
+
+<!-- ══ PRIMER ══ -->
+<section id="primer" class="paper-section">
+    <h2>Primer · the three moving parts</h2>
+    <p class="lede">
+        The model is built from three ideas. None is complicated on its own, and each exists to solve
+        a specific problem with the data. Play with the sliders — the shapes are the explanation.
+    </p>
+
+    <h3>1. A lopsided error bar, so the fit rides the top of the cloud</h3>
+    <p>
+        Ordinary regression assumes being <em>above</em> the line is as surprising as being
+        <em>below</em> it. That is wrong here: you routinely lift less than you could (warmups,
+        back-off sets), but you can't lift more than you can. Missing low is normal; missing high is
+        nearly impossible.
+    </p>
+    <p>
+        So the error distribution is deliberately lopsided. Drag <em>q</em> upward and watch the left
+        tail (below the line) go long and cheap while the right tail (above) gets steep and expensive.
+        The fit then settles near the top of the data rather than through its middle.
+    </p>
+    <div class="badge-row"><span class="badge badge-lit">Literature</span>
+        <span class="note">The Asymmetric Laplace, standard for Bayesian quantile regression
+        (Yu &amp; Moyeed 2001).</span></div>
+    <div class="control-strip">
+        <label>Quantile <em>q</em>
+            <input type="range" id="ald-slider" min="0.5" max="0.95" step="0.05" value="0.9">
+            <output id="ald-out"></output>
+        </label>
+    </div>
+    <div class="chart-host" id="ald-chart" style="min-height: 310px;"></div>
+    <div class="callout" id="ald-callout"></div>
+
+    <h3>2. A squash, so a parameter can't wander somewhere impossible</h3>
+    <p>
+        The sampler explores freely and will happily propose a rep-decay exponent of 0.6, which would
+        mean a 10-rep max is a quarter of your 1RM. Bodies don't do that. Rather than reject such
+        proposals — which makes sampling lurch — the unconstrained number is passed through an
+        S-shaped squash that maps <em>anything</em> onto the plausible range.
+    </p>
+    <p>
+        Note the shape: near the middle it is nearly a straight line, so the data moves β freely where
+        it matters. Only at the extremes does it flatten and refuse to go further.
+    </p>
+    <div class="control-strip">
+        <label>Allowed range
+            <input type="range" id="logit-slider" min="0.10" max="0.60" step="0.01" value="0.35">
+            <output id="logit-out"></output>
+        </label>
+    </div>
+    <div class="chart-host" id="logit-chart" style="min-height: 290px;"></div>
+    <div class="callout" id="logit-callout"></div>
+
+    <h3>3. A wandering line, so strength can change without being told how</h3>
+    <p>
+        Strength isn't a straight line, and it isn't a fixed shape. Rather than assume a trend, the
+        model lets a line wander: each step is a small random nudge from the last. Given data it
+        follows the data; given a gap it simply keeps its last value and widens its uncertainty.
+    </p>
+    <p>
+        The slider sets how big each nudge may be. Too small and the line can't keep up with real
+        change; too large and it chases noise. That size is itself estimated from the data.
+    </p>
+    <div class="badge-row"><span class="badge badge-lit">Literature</span>
+        <span class="note">A local-level state space / Gaussian random walk — textbook time series
+        (Harvey 1989).</span></div>
+    <div class="control-strip">
+        <label>Step size <em>σ</em>
+            <input type="range" id="walk-slider" min="0.02" max="1.0" step="0.02" value="0.3">
+            <output id="walk-out"></output>
+        </label>
+    </div>
+    <div class="chart-host" id="walk-chart" style="min-height: 290px;"></div>
+    <div class="callout" id="walk-callout"></div>
+</section>
+
+<!-- ══ 1. DATA ══ -->
+<section id="data" class="paper-section">
+    <h2>1 · The data</h2>
+    <p>
+        Everything is pulled from Garmin Connect into a curated parquet layer. Two families matter
+        here: <strong>strength sets</strong> (one row per set: exercise, reps, weight) and
+        <strong>daily wellness</strong> (HRV, sleep, resting HR, stress, body battery).
+    </p>
+    <p class="note">
+        The binding constraint on anything wellness-related is that those signals only begin in
+        <strong>December 2022</strong>. Activities go back to 2016, but HRV does not, so every
+        training→recovery model is limited to roughly the last three and a half years.
+    </p>
+    <div class="chart-host" id="coverage-chart"></div>
+
+    <h3>How sessions are structured</h3>
+    <p>
+        Sets aren't always done in blocks. A <strong>superset</strong> alternates between two
+        exercises — bench, curl, bench, curl — which means the set next to a given set is a
+        <em>different</em> movement. That breaks any rule that reads neighbouring sets as context,
+        and it is not a rare edge case here.
+    </p>
+    <div class="chart-host" id="structure-chart"></div>
+    <div class="callout" id="structure-callout"></div>
+
+    <h3>Rep tempo, and the sets where the watch was left running</h3>
+    <p>
+        Individual rep timings aren't recorded, but each set's total duration is — and divided by reps
+        that gives a tempo, which is a real signal of how hard a set was. It needs cleaning first:
+        sometimes the watch keeps running into the rest period, and that inflated duration would read
+        as an extremely slow, extremely hard set.
+    </p>
+    <p class="note">
+        Timed holds are exempt. A plank logged as “1 rep, 60s” is a 60-second hold, not a forgotten
+        watch, so a seconds-per-rep threshold must not be applied to it.
+    </p>
+    <div class="chart-host" id="tempo-chart" style="min-height: 300px;"></div>
+    <div class="callout" id="tempo-callout"></div>
+</section>
+
+<!-- ══ 2. LOAD TYPE ══ -->
+<section id="loadtype" class="paper-section">
+    <h2>2 · What does the “weight” column actually mean?</h2>
+    <p>
+        Garmin records a number in <code>weight</code> for every set but never says what it
+        represents. For a barbell it is the load. For a plank it is zero. For a weighted pull-up it is
+        load <em>added to</em> bodyweight. Treating these alike is not cosmetic: it produced an
+        all-NaN series for planks, because an estimated 1RM on a column that is always zero has no
+        answer.
+    </p>
+    <p>
+        There is a cheap test for telling a real load from machine assistance. Under a real load, reps
+        fall as weight rises; under assistance they <em>rise</em>, because more help means more reps.
+        So the sign of the correlation should separate them.
+    </p>
+    <div class="badge-row"><span class="badge badge-bespoke">Bespoke</span>
+        <span class="note">A pragmatic heuristic put together here, not a published method.</span></div>
+    <div class="callout is-warn">
+        <strong>This test got pull-ups wrong, and the reason is worth keeping.</strong> Pull-ups came
+        back at r = +0.39 while every other lift was negative, and were labelled “assisted” on that
+        basis. They are in fact <em>weighted</em> pull-ups. The correlation was positive because
+        Garmin's <code>pull_up</code> category lumps three different movements: bodyweight pull-ups at
+        0 lb, weighted pull-ups at ~25 lb added, and <strong>lat pulldowns</strong> at 47–120 lb of
+        machine stack. Correlating across that mixture measures the difference between exercises, not
+        a load–rep relationship within one. The test is only meaningful once the unit is a single
+        movement — which is what the taxonomy below is for.
+    </div>
+    <div class="chart-host" id="load-type-chart"></div>
+    <div class="callout" id="load-type-callout"></div>
+</section>
+
+<!-- ══ 3. WARMUP ══ -->
+<section id="warmup" class="paper-section">
+    <h2>3 · The warmup problem</h2>
+    <p>
+        Most sets in a session are deliberately submaximal — warmups and back-off work. So the cloud
+        of (reps, weight) points is dense well below true capacity. A regression through the middle of
+        that cloud is not measuring what you <em>can</em> lift; it is measuring what you
+        <em>chose</em> to lift, most of which was easy on purpose.
+    </p>
+    <p>
+        The fix is to fit a high <em>quantile</em> of the cloud instead of its centre. Drag the slider
+        to watch the fitted line climb from the median toward the capacity envelope, and note how the
+        implied rep-decay exponent \(\beta\) falls as it does.
+    </p>
+    <div class="badge-row"><span class="badge badge-lit">Literature</span>
+        <span class="note">Quantile regression; the Bayesian form uses the Asymmetric Laplace device
+        of Yu &amp; Moyeed (2001).</span></div>
+
+    <div class="control-strip">
+        <label>Quantile <em>q</em>
+            <input type="range" id="q-slider" min="0" max="6" step="1" value="4">
+            <output id="q-out"></output>
+        </label>
+    </div>
+    <div class="chart-host" id="warmup-chart"></div>
+    <div class="callout" id="warmup-callout"></div>
+</section>
+
+<!-- ══ 4. CURVE ══ -->
+<section id="curve" class="paper-section">
+    <h2>4 · The load–rep curve</h2>
+    <p>
+        The relationship between load and achievable reps is modelled as a power law:
+    </p>
+    <div class="equation eqn" data-syms="w r onerm beta" tabindex="0">$$ w(r) \;=\; \text{1RM} \cdot r^{-\beta} $$</div>
+    <p>
+        \(\beta\) controls how fast strength falls off as reps rise. It has a direct physical reading:
+        a 10-rep max sits at \(10^{-\beta}\) of the one-rep max, so \(\beta = 0.15\) means a 10RM is
+        about 71% of 1RM — which is what standard load-rep tables say.
+    </p>
+    <div class="badge-row"><span class="badge badge-lit-ext">Literature, extended</span>
+        <span class="note">This <em>is</em> Lombardi's (1989) power law. Lombardi fixes the exponent at
+        0.10; the only change here is estimating it from data. Set the slider to 0.10 below and our
+        curve lands exactly on his.</span></div>
+
+    <div class="control-strip">
+        <label>Rep-decay \(\beta\)
+            <input type="range" id="beta-slider" min="0.03" max="0.35" step="0.005" value="0.15">
+            <output id="beta-out"></output>
+        </label>
+        <label>1RM (lb)
+            <input type="range" id="onerm-slider" min="50" max="400" step="5" value="200">
+            <output id="onerm-out"></output>
+        </label>
+    </div>
+    <div class="chart-host" id="curve-explorer"></div>
+    <div class="callout" id="curve-callout"></div>
+
+    <h3>Why the headline number is an 8-rep max, not a 1-rep max</h3>
+    <p>
+        A 1RM is the number everyone quotes, but it sits outside the data. Your sets are almost
+        entirely 7–10 reps, so estimating a 1RM means extrapolating past the edge of what was ever
+        observed, and the answer depends heavily on which formula is assumed. An e8RM interpolates,
+        and its interval is correspondingly tighter — so that is what gets headlined, with e1RM shown
+        alongside carrying the wider interval it honestly deserves.
+    </p>
+    <div class="chart-host" id="reps-chart"></div>
+    <div class="callout" id="reps-callout"></div>
+</section>
+
+<!-- ══ 5. VARIANT CONVERSION ══ -->
+<section id="variants" class="paper-section">
+    <h2>5 · Combining variants onto one scale</h2>
+    <p>
+        “Is my bench progressing?” and “is my <em>dumbbell</em> bench progressing?” are different
+        questions, and until this step only the second had an answer. Garmin records a dumbbell bench
+        at a median 55 lb and a barbell bench at 135 lb. Plotted together they look like a strength
+        collapse every time the implement changes; kept apart, neither series answers the question
+        actually being asked.
+    </p>
+    <p>
+        Combining them needs a conversion factor, and there is no trustworthy one to borrow —
+        published dumbbell:barbell ratios vary far too widely, and none of them are about this
+        account. But the data can supply one, because over a long stretch both implements were
+        trained in the same period, measuring the same underlying strength through two instruments.
+    </p>
+
+    <h3>The estimator</h3>
+    <p>For movement family \(f\), on date \(t\), using variant \(v\)'s best set that day:</p>
+    <div class="equation eqn" data-syms="onerm" tabindex="0">$$ \log(\text{e1RM}) \;=\; \text{level}_f(t) \;+\; \delta_v \;+\; \varepsilon $$</div>
+    <p>
+        \(\text{level}_f(t)\) is the strength every variant shares, piecewise-linear between monthly
+        knots; \(\delta_v\) is the systematic gap that remains after allowing for strength changing
+        over time. Both fall out of one least-squares fit, and \(e^{-\delta_v}\) is the factor that
+        puts variant \(v\) on the reference variant's scale. Fitting the level is what makes this
+        different from a raw ratio: a trend running through the period would otherwise leak into the
+        offset.
+    </p>
+    <div class="badge-row"><span class="badge badge-bespoke">Bespoke</span>
+        <span class="note">The machinery is ordinary fixed-effects regression. Applying it to convert
+        between lifting implements is a choice made here, and is not a published method.</span></div>
+
+    <h3>The result</h3>
+    <p>
+        The fitted factors come out near 2–3× for dumbbell versus barbell work, which has a mundane
+        explanation: Garmin logs dumbbell weight <em>per hand</em>, so two of them plus the
+        biomechanical difference lands about there. That the estimate reproduces a known mechanical
+        fact it was never told about is the first sign it is measuring something real.
+    </p>
+    <div class="chart-host" id="conversion-chart"></div>
+    <div class="callout" id="conversion-callout"></div>
+
+    <h3>Two checks, because one is not enough</h3>
+    <p>
+        Every factor is cross-checked against a completely independent estimate: pair each session of
+        a variant with reference sessions within two weeks — close enough that real strength has
+        barely moved — and take the median ratio. It uses far less data and says nothing about trend,
+        but it fails in different ways, which is the point. Where the two agree, the factor is not an
+        artefact of the level basis.
+    </p>
+    <p>
+        Agreement alone still is not sufficient. A label covering two different implements has no
+        single valid factor, yet both estimators will happily converge on the midpoint of the mixture
+        and agree with each other while both are wrong. That case is caught instead by residual
+        spread, which is wide for a mixture and narrow for a genuine variant. A factor is used only
+        if it passes both, plus a minimum of concurrent training history.
+    </p>
+    <div class="chart-host" id="conversion-scatter-chart"></div>
+    <div class="callout" id="conversion-scatter-callout"></div>
+    <p class="note">
+        Two labels currently fail these checks and are excluded from the combined series rather than
+        folded in on a number that is not believed — both are Garmin's unlabelled catch-all buckets,
+        which genuinely do contain more than one implement. Their own per-variant series are
+        unaffected.
+    </p>
+</section>
+
+<!-- ══ 6. MODEL ══ -->
+<section id="model" class="paper-section">
+    <h2>6 · The model</h2>
+    <p>For exercise \(e\), on date \(t\), for set \(i\):</p>
+    <div class="equation eqn" data-syms="w r alpha beta b q e t i" tabindex="0">$$ \log w_{eti} \;\sim\; \mathrm{AsymmetricLaplace}\!\left(\mu = \alpha_e(t) - \beta_e \log r_{eti},\; b,\; q\right) $$</div>
+
+    <h3>The latent strength level \(\alpha_e(t)\)</h3>
+    <p>
+        Strength changes over weeks, not between consecutive sessions. So rather than giving every
+        session its own free parameter, the level is a Gaussian random walk over a
+        <strong>monthly knot grid</strong>, and each session reads a linear interpolation between the
+        two knots surrounding it:
+    </p>
+    <div class="equation eqn" data-syms="alpha sigma_walk lambda k e t" tabindex="0">$$ \alpha_{e,k} \sim \mathcal{N}(\alpha_{e,k-1},\, \sigma_{\text{walk}}), \qquad \alpha_e(t) = (1-\lambda)\,\alpha_{e,k} + \lambda\,\alpha_{e,k+1} $$</div>
+    <p class="note">
+        This was not the original design — it replaced one node per session, which meant ~1,400
+        parameters. The knot grid cut that to 480 and imposes the smoothness directly. Use the slider
+        to see what knot spacing does to the recovered level.
+    </p>
+    <div class="control-strip">
+        <label>Knot spacing (days)
+            <input type="range" id="knot-slider" min="7" max="120" step="7" value="30">
+            <output id="knot-out"></output>
+        </label>
+    </div>
+    <div class="chart-host" id="knot-chart"></div>
+
+    <h3>The rep-decay exponent \(\beta_e\)</h3>
+    <p>
+        \(\beta_e\) is partially pooled across exercises and squashed into a physiological band
+        \([0.03, 0.35]\):
+    </p>
+    <div class="equation eqn" data-syms="beta beta_min beta_max mu_beta sigma_beta z e" tabindex="0">$$ \beta_e = \beta_{\min} + (\beta_{\max}-\beta_{\min})\,\mathrm{logit}^{-1}\!\left(\mu_\beta + \sigma_\beta z_e\right) $$</div>
+    <p>
+        The pooling is load-bearing rather than decorative. Where reps barely vary, \(\alpha\) and
+        \(\beta\) are not separately identifiable at all — every set at 10 reps constrains only the
+        combination \(\alpha - \beta\log 10\), so any increase in one buys an equal increase in the
+        other. That is a ridge in the posterior rather than a peak. Exercises without enough rep
+        spread therefore don't get their own \(\beta\) at all; they borrow the population value.
+    </p>
+    <div class="chart-host" id="repvar-chart"></div>
+    <div class="callout" id="repvar-callout"></div>
+</section>
+
+<!-- ══ 6. FITTING ══ -->
+<section id="fitting" class="paper-section">
+    <h2>7 · Fitting &amp; diagnostics</h2>
+    <p>
+        Sampled with NUTS (PyMC, numpyro backend). Convergence is judged by \(\hat{R}\), which
+        compares variance between chains to variance within them; the conventional bar is
+        \(\hat{R} \le 1.01\).
+    </p>
+    <div class="badge-row"><span class="badge badge-lit">Literature</span>
+        <span class="note">Gelman &amp; Rubin (1992); rank-normalised form and the 1.01 threshold from
+        Vehtari et al. (2021).</span></div>
+
+    <div class="status-banner" id="fit-status-banner"></div>
+
+    <h3>What has been tried</h3>
+    <p>
+        Each bar is a real run. Lower is better; the dashed line is the 1.01 bar.
+        <strong>Check the scope under each label</strong> — some are deliberate subsets, and
+        comparing across scopes is what makes the pattern interpretable.
+    </p>
+    <div class="chart-host" id="convergence-chart"></div>
+    <div class="callout is-warn" id="convergence-callout"></div>
+
+    <h3>Validation on synthetic data</h3>
+    <p>
+        The model itself is verified against data generated from a known curve: it recovers a true
+        \(\beta\) of 0.13 as <strong>0.130</strong>, recovers the strength trajectory to within ~1%,
+        converges cleanly (\(\hat{R} \approx 1.003\), zero divergences), and is not dragged down by
+        adding warmup sets. So the open problem is the sampler's behaviour on this particular real
+        dataset, not the model's logic.
+    </p>
+</section>
+
+<!-- ══ 7. HRV ══ -->
+<section id="hrv" class="paper-section">
+    <h2>8 · Does training move your HRV?</h2>
+    <p>
+        HRV is strongly autocorrelated, so a raw correlation against training load mostly rediscovers
+        “yesterday's HRV predicts today's”. The bars below are <strong>partial</strong> correlations —
+        training load against HRV after removing HRV's own lag-1 and 7-day baseline.
+    </p>
+    <div class="chart-host" id="lag-chart"></div>
+    <div class="callout" id="lag-callout"></div>
+</section>
+
+<!-- ══ 8. ROADMAP ══ -->
+<section id="roadmap" class="paper-section">
+    <h2>9 · Roadmap</h2>
+    <div class="roadmap" id="roadmap-list"></div>
+</section>
+
+<!-- ══ 9. PROVENANCE ══ -->
+<section id="provenance" class="paper-section">
+    <h2>10 · Provenance — what is borrowed, what is not</h2>
+    <p>
+        Being explicit about this matters: most of the apparent sophistication here is standard method
+        that other people developed and validated. The genuinely repo-specific pieces are few, and none
+        of them are validated beyond this one account.
+    </p>
+    <div class="provenance" id="provenance-list"></div>
+</section>
+
+</main>
+</div>
+
+<style>
+.paper-layout { display: block; --gloss-body-w: 340px; --gloss-handle-w: 30px; }
+.paper-toolbar {
+    display: flex; align-items: center; justify-content: flex-end; gap: 14px;
+    margin-bottom: 14px; flex-wrap: wrap;
+}
+
+
+.paper-main { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.paper-section { background: var(--lg-card); border: 1px solid var(--lg-border); border-radius: var(--lg-radius-lg); padding: 24px 28px; scroll-margin-top: calc(var(--lg-nav-h) + 16px); }
+.paper-section h2 { font-size: 20px; margin: 0 0 12px; letter-spacing: -0.01em; }
+.paper-section h3 { font-size: 15px; margin: 26px 0 8px; color: var(--lg-text); }
+.paper-section p { max-width: 74ch; line-height: 1.62; margin: 0 0 12px; color: var(--lg-text-2); }
+.paper-section .lede { font-size: 15px; color: var(--lg-text); }
+.paper-section .note { font-size: var(--fs-sm); color: var(--lg-text-3); }
+
+.equation { margin: 14px 0 18px; padding: 12px; overflow-x: auto; background: var(--lg-active); border-radius: var(--lg-radius-lg); }
+
+.callout { margin-top: 14px; padding: 12px 16px; border-left: 3px solid var(--lg-gold); background: color-mix(in srgb, var(--lg-gold) 7%, transparent); border-radius: 0 var(--lg-radius-lg) var(--lg-radius-lg) 0; font-size: var(--fs-sm); line-height: 1.55; color: var(--lg-text-2); }
+.callout strong { color: var(--lg-text); }
+.callout.is-warn { border-left-color: var(--lg-warning); background: color-mix(in srgb, var(--lg-warning) 8%, transparent); }
+
+.badge-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 10px 0 14px; }
+.badge { font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em; padding: 3px 8px; border-radius: 999px; font-weight: 700; white-space: nowrap; }
+.badge-lit { background: color-mix(in srgb, var(--lg-info) 18%, transparent); color: var(--lg-info); }
+.badge-lit-ext { background: color-mix(in srgb, var(--lg-success) 18%, transparent); color: var(--lg-success); }
+.badge-contested { background: color-mix(in srgb, var(--lg-warning) 20%, transparent); color: var(--lg-warning); }
+.badge-bespoke { background: color-mix(in srgb, var(--lg-highlight) 18%, transparent); color: var(--lg-highlight); }
+.badge-unsupported { background: color-mix(in srgb, var(--lg-danger) 16%, transparent); color: var(--lg-danger); }
+
+.control-strip { display: flex; flex-wrap: wrap; gap: 22px; padding: 12px 14px; margin: 8px 0 4px; background: var(--lg-active); border-radius: var(--lg-radius-lg); }
+.control-strip label { display: flex; align-items: center; gap: 10px; font-size: var(--fs-sm); color: var(--lg-text-2); }
+.control-strip input[type=range] { width: 190px; accent-color: var(--lg-gold); }
+.control-strip output { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--lg-text); min-width: 132px; font-size: var(--fs-sm); }
+
+.kpi-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 16px 0 4px; }
+.kpi-box { padding: 12px 14px; border: 1px solid var(--lg-border); border-radius: var(--lg-radius-lg); }
+.kpi-box .k { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--lg-text-3); }
+.kpi-box .v { font-size: 22px; font-weight: 700; margin-top: 3px; }
+.kpi-box .s { font-size: var(--fs-xs); color: var(--lg-text-3); margin-top: 2px; }
+
+.status-banner { padding: 14px 16px; border-radius: var(--lg-radius-lg); font-size: var(--fs-sm); line-height: 1.55; margin: 12px 0; }
+.status-banner.ok { background: color-mix(in srgb, var(--lg-success) 10%, transparent); border: 1px solid var(--lg-success); }
+.status-banner.bad { background: color-mix(in srgb, var(--lg-warning) 10%, transparent); border: 1px solid var(--lg-warning); }
+
+.provenance { display: flex; flex-direction: column; gap: 8px; }
+.prov-item { padding: 12px 14px; border: 1px solid var(--lg-border); border-radius: var(--lg-radius-lg); }
+.prov-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 5px; }
+.prov-name { font-weight: 650; font-size: var(--fs-sm); }
+.prov-detail { font-size: var(--fs-sm); color: var(--lg-text-2); line-height: 1.55; }
+
+.roadmap { display: flex; flex-direction: column; gap: 8px; }
+.road-item { display: flex; gap: 12px; align-items: flex-start; padding: 11px 14px; border: 1px solid var(--lg-border); border-radius: var(--lg-radius-lg); }
+.road-state { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; padding: 3px 8px; border-radius: 999px; white-space: nowrap; flex-shrink: 0; margin-top: 1px; }
+.road-done { background: color-mix(in srgb, var(--lg-success) 18%, transparent); color: var(--lg-success); }
+.road-open { background: color-mix(in srgb, var(--lg-warning) 18%, transparent); color: var(--lg-warning); }
+.road-next { background: color-mix(in srgb, var(--lg-info) 18%, transparent); color: var(--lg-info); }
+.road-body { font-size: var(--fs-sm); color: var(--lg-text-2); line-height: 1.5; }
+.road-body b { color: var(--lg-text); }
+
+code { background: var(--lg-active); padding: 1px 5px; border-radius: 4px; font-size: 0.92em; }
+:root { --lg-muted-chart: #8d9aab; }
+
+/* ==== docked symbol glossary (see kaya docs/docked-reference-panel.md) ==== */
+.glossary {
+    position: fixed; top: var(--lg-nav-h, 0px); right: 0; bottom: 0;
+    z-index: 9;                   /* below the top nav so nav stays clickable */
+    display: flex; align-items: stretch;
+    pointer-events: none;         /* only the handle + body catch events */
+    transform: translateX(calc(100% - var(--gloss-handle-w)));
+    --gloss-handle-w: 30px;
+    --gloss-body-w: 340px;
+}
+/* Trap 1: no transition until JS confirms the resting position is set. */
+.glossary.is-animated { transition: transform 220ms cubic-bezier(0.22, 0.61, 0.36, 1); }
+.glossary[data-open='true'] { transform: translateX(0); }
+
+.glossary-handle {
+    pointer-events: auto; flex: 0 0 var(--gloss-handle-w);
+    display: flex; align-items: center; justify-content: center; align-self: center;
+    height: 160px; padding: 0;
+    border: 1px solid var(--lg-border); border-right: none;
+    border-radius: var(--lg-radius-lg) 0 0 var(--lg-radius-lg);
+    background: var(--lg-surface); color: var(--lg-text-2); cursor: pointer;
+    transition: color 140ms ease, background 140ms ease;
+}
+.glossary-handle:hover { color: var(--lg-gold); background: var(--lg-active); }
+.glossary-handle-text {
+    writing-mode: vertical-rl; text-orientation: mixed; transform: rotate(180deg);
+    font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 640;
+}
+.glossary[data-open='true'] .glossary-handle-text::after { content: ' \203A'; }
+.glossary[data-open='false'] .glossary-handle-text::after { content: ' \2039'; }
+
+.glossary-body {
+    pointer-events: auto; flex: 0 0 var(--gloss-body-w);
+    display: flex; flex-direction: column;
+    min-height: 0;                /* lets .glossary-scroll actually scroll */
+    background: var(--lg-surface); border-left: 1px solid var(--lg-border);
+    box-shadow: -12px 0 28px -18px rgb(0 0 0 / 0.45);
+}
+.glossary-head { padding: 14px 16px 10px; border-bottom: 1px solid var(--lg-border); }
+.glossary-head h4 {
+    margin: 0 0 4px; font-size: 0.78rem; text-transform: uppercase;
+    letter-spacing: 0.09em; color: var(--lg-gold);
+}
+.glossary-head p { margin: 0; font-size: 0.76rem; line-height: 1.45; color: var(--lg-text-2); }
+.glossary-scroll { overflow-y: auto; overscroll-behavior: contain; padding: 4px 0 24px; min-height: 0; }
+
+.glossary .sym-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+.glossary .sym-table td { padding: 7px 12px; vertical-align: top; line-height: 1.45; }
+.glossary .sym-table tr.sym-row { border-bottom: 1px solid var(--lg-border); }
+.glossary .sym-table td.sym {
+    white-space: nowrap; width: 1%; padding-right: 10px;
+    border-left: 2px solid transparent;
+}
+.glossary .sym-table .unit {
+    display: block; margin-top: 3px; color: var(--lg-text-2);
+    font-size: 0.7rem; white-space: normal;
+}
+.glossary .sym-group td {
+    font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--lg-text-3); padding-top: 14px;
+}
+
+/* Trap 2: reserve the gutter so content is pushed, not overlaid. */
+@media (min-width: 1180px) {
+    /* Reserve body + handle: the handle sits outside the body, so reserving
+       only the body leaves the content edge tucked under it. */
+    .paper-layout.gloss-open {
+        padding-right: calc(var(--gloss-body-w, 340px) + var(--gloss-handle-w, 30px));
+    }
+    .paper-layout.gloss-anim { transition: padding-right 220ms cubic-bezier(0.22, 0.61, 0.36, 1); }
+}
+@media (prefers-reduced-motion: reduce) { .paper-layout.gloss-anim { transition: none; } }
+
+.glossary.is-filtered .sym-row:not(.sym-hit) { opacity: 0.28; }
+.glossary.is-filtered .sym-group { opacity: 0.4; }
+.glossary .sym-row.sym-hit td.sym { border-left-color: var(--lg-gold); }
+.glossary .sym-row.sym-hit { background: color-mix(in srgb, var(--lg-gold) 11%, transparent); }
+.glossary .sym-row, .glossary .sym-group { transition: opacity 140ms ease, background 140ms ease; }
+
+.eqn {
+    border-left: 2px solid transparent;
+    transition: background 140ms ease, border-color 140ms ease;
+    outline: none; cursor: pointer;
+}
+.eqn:hover, .eqn:focus-visible, .eqn.eqn-active {
+    background: color-mix(in srgb, var(--lg-gold) 9%, transparent);
+    border-left-color: var(--lg-gold);
+}
+</style>
+
+<script>
+// token() is defined once in static/js/tokens.js -- it resolves color-mix()
+// tokens that getPropertyValue would otherwise return unparsed.
+const PC = { responsive: true, displaylogo: false, displayModeBar: false };
+const label = (k) => k.split('_').map(w => w[0].toUpperCase() + w.slice(1)).join(' ');
+
+function baseLayout(yTitle, extra) {
+    return Object.assign({
+        margin: { l: 64, r: 16, t: 12, b: 46 },
+        paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
+        font: { color: token('--lg-text-2'), size: 12, family: 'IBM Plex Sans, sans-serif' },
+        xaxis: { gridcolor: token('--lg-border'), zeroline: false },
+        yaxis: { gridcolor: token('--lg-border'), zeroline: false, title: { text: yTitle, font: { size: 11 } } },
+        showlegend: false,
+    }, extra || {});
+}
+
+let REPORT = null;
+
+/* ── Overview KPIs ── */
+function renderKpis(d) {
+    const cov = d.coverage || [];
+    const daily = cov.filter(c => c.kind === 'daily');
+    const sets = (d.load_types || []).reduce((a, r) => a + r.n_sets, 0);
+    const hrvN = d.wellness_lags ? d.wellness_lags.n : 0;
+    const fitted = (d.strength_curves || {}).n_fitted || 0;
+    const boxes = [
+        { k: 'Strength sets', v: sets.toLocaleString(), s: 'one row per set' },
+        { k: 'Wellness days', v: hrvN.toLocaleString(), s: 'usable for HRV modelling' },
+        { k: 'Datasets', v: cov.length, s: `${daily.length} daily, ${cov.length - daily.length} activity` },
+        { k: 'Curves fitted', v: fitted, s: fitted ? 'converged' : 'blocked on convergence' },
+    ];
+    document.getElementById('overview-kpis').innerHTML = boxes.map(b =>
+        `<div class="kpi-box"><div class="k">${b.k}</div><div class="v">${b.v}</div><div class="s">${b.s}</div></div>`
+    ).join('');
+}
+
+/* ── 1. Coverage ── */
+function renderCoverage(rows) {
+    const sorted = rows.slice().sort((a, b) => a.start.localeCompare(b.start));
+    Plotly.newPlot('coverage-chart', sorted.map(r => {
+        let end = r.end;
+        if (r.start === r.end) { const dt = new Date(r.end); dt.setMonth(dt.getMonth() + 2); end = dt.toISOString().slice(0, 10); }
+        return {
+            type: 'scatter', mode: 'lines', x: [r.start, end], y: [r.name, r.name],
+            line: { color: token(r.kind === 'daily' ? '--lg-gold' : '--lg-highlight'), width: 9 },
+            hovertemplate: `${r.name}<br>${r.start} → ${r.end}<br>${r.rows} rows<extra></extra>`, showlegend: false,
+        };
+    }), baseLayout('', { height: Math.max(300, sorted.length * 26), margin: { l: 165, r: 20, t: 10, b: 40 } }), PC);
+}
+
+/* ── Primer: the three building blocks, drawn from pure maths (no data) ── */
+
+// Asymmetric Laplace density. rho_q(x) = x*(q - 1[x<0]) is the quantile
+// "check" loss; exponentiating it gives the likelihood whose mode sits at the
+// q-th quantile rather than the mean.
+function renderAsymmetricLaplace() {
+    const q = +document.getElementById('ald-slider').value;
+    document.getElementById('ald-out').textContent = `q = ${q.toFixed(2)}`;
+    const b = 1.0;
+    const xs = [], ys = [];
+    for (let x = -4; x <= 4.0001; x += 0.02) {
+        const rho = x * (q - (x < 0 ? 1 : 0));
+        xs.push(x); ys.push((q * (1 - q) / b) * Math.exp(-rho / b));
+    }
+    Plotly.react('ald-chart', [
+        { x: xs, y: ys, type: 'scatter', mode: 'lines', fill: 'tozeroy',
+          line: { color: token('--lg-gold'), width: 2.5 },
+          fillcolor: 'rgba(0,0,0,0.05)', showlegend: false,
+          hovertemplate: 'residual %{x:.2f} → density %{y:.3f}<extra></extra>' },
+    ], baseLayout('Relative likelihood', {
+        height: 310,
+        xaxis: { gridcolor: token('--lg-border'), zeroline: true,
+                 zerolinecolor: token('--lg-text-2'), zerolinewidth: 1.5,
+                 title: { text: '← lifted less than the fit    ·    lifted more than the fit →', font: { size: 10 } } },
+        // Anchored near the top of the plot area -- at the bottom they collide
+        // with the axis title.
+        annotations: [
+            { x: -2.7, y: 0.9, yref: 'paper', yanchor: 'top', text: 'cheap<br>(a warmup)',
+              showarrow: false, align: 'center',
+              font: { size: 10, color: token('--lg-muted-chart') } },
+            { x: 2.4, y: 0.9, yref: 'paper', yanchor: 'top', text: 'expensive<br>(beyond capacity)',
+              showarrow: false, align: 'center',
+              font: { size: 10, color: token('--lg-muted-chart') } },
+        ],
+        margin: { l: 64, r: 16, t: 22, b: 64 },
+    }), PC);
+
+    const ratio = (q / (1 - q));
+    document.getElementById('ald-callout').innerHTML = q === 0.5
+        ? `<strong>At q = 0.50 this is symmetric</strong> — an ordinary Laplace, and the fit runs through the middle of the data like any regression. That is the behaviour we're trying to avoid.`
+        : `At <strong>q = ${q.toFixed(2)}</strong>, sitting above the line is penalised <strong>${ratio.toFixed(1)}×</strong> more than sitting the same distance below it. `
+          + `The fitted line is therefore pushed up until about ${(q * 100).toFixed(0)}% of sets fall beneath it — which is what makes it a capacity estimate rather than an average.`;
+}
+
+// Sigmoid squash from an unconstrained real number into [BETA_MIN, max].
+function renderLogitSquash() {
+    const hi = +document.getElementById('logit-slider').value;
+    const lo = 0.03;
+    document.getElementById('logit-out').textContent = `β ∈ [${lo}, ${hi.toFixed(2)}]`;
+    const xs = [], ys = [];
+    for (let x = -6; x <= 6.0001; x += 0.05) {
+        xs.push(x); ys.push(lo + (hi - lo) / (1 + Math.exp(-x)));
+    }
+    Plotly.react('logit-chart', [
+        { x: xs, y: ys, type: 'scatter', mode: 'lines',
+          line: { color: token('--lg-gold'), width: 2.5 }, showlegend: false,
+          hovertemplate: 'proposed %{x:.2f} → β = %{y:.3f}<extra></extra>' },
+        { x: [-6, 6], y: [hi, hi], type: 'scatter', mode: 'lines',
+          line: { color: token('--lg-danger'), width: 1, dash: 'dot' }, showlegend: false, hoverinfo: 'skip' },
+        { x: [-6, 6], y: [lo, lo], type: 'scatter', mode: 'lines',
+          line: { color: token('--lg-danger'), width: 1, dash: 'dot' }, showlegend: false, hoverinfo: 'skip' },
+    ], baseLayout('β actually used', {
+        height: 290,
+        xaxis: { gridcolor: token('--lg-border'), zeroline: false,
+                 title: { text: 'what the sampler proposes (unbounded)', font: { size: 10 } } },
+        yaxis: { gridcolor: token('--lg-border'), zeroline: false, range: [0, hi * 1.15],
+                 title: { text: 'β actually used', font: { size: 10 } } },
+    }), PC);
+
+    const pct10 = Math.pow(10, -hi) * 100;
+    document.getElementById('logit-callout').innerHTML =
+        `With the ceiling at <strong>β = ${hi.toFixed(2)}</strong>, the most extreme drop-off the model can express is a `
+        + `10-rep max at <strong>${pct10.toFixed(0)}%</strong> of the one-rep max. Published tables put a real 10RM around `
+        + `70–75%, so a ceiling much above 0.20 is already allowing the physically implausible. `
+        + `The model ships with 0.35 — loose enough not to fight the data, tight enough to rule out nonsense.`;
+}
+
+// A Gaussian random walk, with a fixed noise draw so moving the slider shows
+// the effect of step size rather than a different random path each time.
+const WALK_NOISE = (() => {
+    let seed = 7;
+    return Array.from({ length: 60 }, () => {
+        seed = (seed * 1103515245 + 12345) % 2147483648;
+        const u1 = (seed / 2147483648) || 0.5;
+        seed = (seed * 1103515245 + 12345) % 2147483648;
+        const u2 = (seed / 2147483648) || 0.5;
+        return Math.sqrt(-2 * Math.log(u1 || 1e-9)) * Math.cos(2 * Math.PI * u2);
+    });
+})();
+
+function renderRandomWalk() {
+    const sigma = +document.getElementById('walk-slider').value;
+    document.getElementById('walk-out').textContent = `σ = ${sigma.toFixed(2)}`;
+    const y = [0];
+    WALK_NOISE.forEach((z) => y.push(y[y.length - 1] + z * sigma));
+    const x = y.map((_, i) => i);
+    // Uncertainty about where the walk goes grows as sqrt(steps).
+    const band = x.map(i => sigma * Math.sqrt(i) * 1.96);
+    Plotly.react('walk-chart', [
+        { x: x.concat([...x].reverse()),
+          y: band.map((b, i) => b).concat([...band].reverse().map((b, i) => -b)),
+          type: 'scatter', fill: 'toself', mode: 'none',
+          fillcolor: 'rgba(0,0,0,0.05)', showlegend: false, hoverinfo: 'skip' },
+        { x, y, type: 'scatter', mode: 'lines',
+          line: { color: token('--lg-gold'), width: 2.5 }, showlegend: false,
+          hovertemplate: 'step %{x} → level %{y:.2f}<extra></extra>' },
+    ], baseLayout('Latent level', {
+        height: 290,
+        xaxis: { gridcolor: token('--lg-border'), zeroline: false,
+                 title: { text: 'steps (one per knot)', font: { size: 10 } } },
+    }), PC);
+
+    document.getElementById('walk-callout').innerHTML =
+        `The shaded band is where the line could plausibly have gone — it widens as \\(\\sqrt{\\text{steps}}\\), `
+        + `which is exactly why a long training gap produces a wide uncertainty band rather than a confident guess. `
+        + `At <strong>σ = ${sigma.toFixed(2)}</strong> per knot, ${(sigma * Math.sqrt(12) * 1.96).toFixed(1)} is the 95% spread after a year of monthly knots.`;
+}
+
+/* ── 1b. Session structure (straight sets vs supersets) ── */
+function renderStructure(structure) {
+    if (!structure || !structure.by_year || !structure.by_year.length) return;
+    const years = structure.by_year.map(r => r.year);
+    Plotly.newPlot('structure-chart', [
+        { type: 'bar', name: 'Straight sets', x: years, y: structure.by_year.map(r => r.straight),
+          marker: { color: token('--lg-gold') } },
+        { type: 'bar', name: 'Superset (alternating)', x: years, y: structure.by_year.map(r => r.superset),
+          marker: { color: token('--lg-highlight') } },
+    ], baseLayout('Sessions', {
+        barmode: 'stack', height: 300, showlegend: true, legend: { orientation: 'h', y: -0.2 },
+        xaxis: { gridcolor: token('--lg-border'), zeroline: false, dtick: 1 },
+    }), PC);
+
+    const c = structure.counts || {};
+    const total = (c.straight || 0) + (c.superset || 0);
+    const pct = total ? Math.round((c.superset || 0) / total * 100) : 0;
+    document.getElementById('structure-callout').innerHTML =
+        `<strong>${c.superset} of ${total} sessions (${pct}%) alternate between exercises.</strong> `
+        + `The habit peaked in 2023 and has since stopped entirely — no supersets at all in 2025 or 2026.<br><br>`
+        + `The exercise-inference rule reads neighbouring sets as evidence, so it now detects each session's `
+        + `stride and steps by it: two sets along in a superset, one in a straight-set session. Before that it `
+        + `weighted the immediate neighbour most heavily, which is exactly backwards for a superset.<br><br>`
+        + `<strong>The measured impact was small</strong> — 7 of 9,204 suggestions changed — because a separate `
+        + `guard was already catching most cases by accident: a neighbour only votes if its weight is within 20%, `
+        + `and a 135 lb bench next to a 28 lb curl fails that anyway. It now holds for exercise pairs at similar `
+        + `loads too, where the weight guard would not have saved it.`;
+}
+
+/* ── 1c. Rep tempo + watch-left-running rejection ── */
+function renderTempo(t) {
+    if (!t) return;
+    Plotly.newPlot('tempo-chart', [{
+        type: 'bar', x: t.bins, y: t.counts,
+        marker: { color: token('--lg-gold') },
+        hovertemplate: '%{x:.0f}–%{x:.0f}+1 s/rep — %{y} sets<extra></extra>',
+    }], baseLayout('Sets', {
+        height: 300, bargap: 0.05,
+        margin: { l: 64, r: 16, t: 10, b: 54 },
+        xaxis: { gridcolor: token('--lg-border'), zeroline: false,
+                 title: { text: 'Seconds per rep', font: { size: 11 } } },
+    }), PC);
+
+    const q = t.quantiles;
+    document.getElementById('tempo-callout').innerHTML =
+        `Tempo clusters tightly: median <strong>${q['0.5']} s/rep</strong>, 90th percentile ${q['0.9']}, `
+        + `99th ${q['0.99']}. That is a narrow, well-behaved distribution — usable as an effort signal.<br><br>`
+        + `<strong>${t.n_flagged} of ${t.n_total.toLocaleString()} sets (${(t.n_flagged / t.n_total * 100).toFixed(1)}%)</strong> `
+        + `were rejected as the watch being left running, the worst at <strong>${t.max_flagged} s/rep</strong>. `
+        + `Only their <em>timing</em> is discarded — the reps and weight are still good, so those sets keep `
+        + `counting toward strength and volume.`;
+}
+
+/* ── 2. Load types ── */
+const LT_COLORS = { external_load: '--lg-gold', bodyweight_reps: '--lg-muted-chart', assisted: '--lg-danger', mixed: '--lg-warning' };
+function renderLoadTypes(rows) {
+    const scored = rows.filter(r => r.corr_weight_reps !== null).sort((a, b) => a.corr_weight_reps - b.corr_weight_reps);
+    const mk = (sub, op, name) => ({
+        type: 'bar', orientation: 'h', name,
+        x: sub.map(r => r.corr_weight_reps), y: sub.map(r => label(r.exercise)),
+        marker: { color: sub.map(r => token(LT_COLORS[r.load_type] || '--lg-gold')), opacity: op },
+        error_x: { type: 'data', visible: true, color: token('--lg-muted-chart'), thickness: 1.5, width: 3,
+            array: sub.map(r => (r.corr_hi ?? r.corr_weight_reps) - r.corr_weight_reps),
+            arrayminus: sub.map(r => r.corr_weight_reps - (r.corr_lo ?? r.corr_weight_reps)) },
+        customdata: sub.map(r => [r.n_loaded_sets, r.median_weight, r.corr_lo, r.corr_hi]),
+        hovertemplate: '%{y}<br>r = %{x:.3f} (95%% CI %{customdata[2]} to %{customdata[3]})<br>%{customdata[0]} loaded sets · median %{customdata[1]} lb<extra></extra>',
+    });
+    const rel = scored.filter(r => r.reliable), weak = scored.filter(r => !r.reliable);
+    const traces = [];
+    if (rel.length) traces.push(mk(rel, 1.0, 'Well sampled'));
+    if (weak.length) traces.push(mk(weak, 0.35, 'Too few sets to judge'));
+    Plotly.newPlot('load-type-chart', traces, baseLayout('', {
+        height: Math.max(280, scored.length * 32), showlegend: true, legend: { orientation: 'h', y: -0.14 },
+        xaxis: { gridcolor: token('--lg-border'), zeroline: true, zerolinecolor: token('--lg-text'), zerolinewidth: 2,
+            title: { text: 'corr(weight, reps) — negative = real load, positive = assistance', font: { size: 11 } } },
+        margin: { l: 150, r: 20, t: 10, b: 70 },
+    }), PC);
+
+    const a = rows.find(r => r.load_type === 'assisted' && r.corr_weight_reps > 0 && r.reliable);
+    const bw = rows.filter(r => r.load_type === 'bodyweight_reps' && r.n_sets > 0);
+    let html = '';
+    if (a) html += `<strong>${label(a.exercise)}: r = ${a.corr_weight_reps.toFixed(3)} (95% CI ${a.corr_lo} to ${a.corr_hi}, ${a.n_loaded_sets} sets)</strong> — a tight interval clear of zero, and still the wrong conclusion. The signal is real but it is measuring a mixture of three movements, not one exercise's load–rep curve (see the note above). A confident interval around a badly-specified quantity is still confidently wrong. `;
+    if (weak.length) html += `<br><br><strong>The faded bars are under-sampled</strong> (${weak.map(r => `${label(r.exercise)} n=${r.n_loaded_sets}`).join(', ')}). Their intervals are far too wide to reclassify anything on — the point estimates alone would have been enough to misclassify them, which is exactly why the intervals are drawn. `;
+    if (bw.length) html += `<br><br>${bw.map(b => label(b.exercise)).join(', ')} are 100% zero-weight; they track reps instead.`;
+    document.getElementById('load-type-callout').innerHTML = html;
+}
+
+/* ── 3. Warmup / quantile slider ── */
+function renderWarmup() {
+    const sweep = REPORT.envelope_sweep, bias = REPORT.warmup_bias;
+    if (!sweep || !bias) return;
+    const idx = +document.getElementById('q-slider').value;
+    const fit = sweep.fits[Math.min(idx, sweep.fits.length - 1)];
+    document.getElementById('q-out').textContent = `q = ${fit.q}  →  β = ${fit.beta.toFixed(3)}`;
+
+    Plotly.react('warmup-chart', [
+        { type: 'scatter', mode: 'markers', name: 'Individual sets', x: bias.sets.reps, y: bias.sets.weight,
+          marker: { color: token('--lg-muted-chart'), size: 4, opacity: 0.25 }, hovertemplate: '%{x} reps @ %{y} lb<extra></extra>' },
+        { type: 'scatter', mode: 'lines', name: `Fit at q=${fit.q}`, x: sweep.reps, y: fit.weight,
+          line: { color: token('--lg-gold'), width: 3 } },
+    ], baseLayout('Weight (lb)', {
+        showlegend: true, legend: { orientation: 'h', y: -0.22 }, height: 380,
+        xaxis: { gridcolor: token('--lg-border'), zeroline: false, title: { text: 'Reps', font: { size: 11 } } },
+    }), PC);
+
+    const med = sweep.fits[0], hi = sweep.fits[sweep.fits.length - 1];
+    document.getElementById('warmup-callout').innerHTML =
+        `At the median (<strong>q=${med.q}</strong>) the fit reports <strong>β = ${med.beta.toFixed(2)}</strong>, `
+        + `implying you'd lift ${Math.pow(10, med.beta).toFixed(1)}× more at 1 rep than at 10 — physically impossible `
+        + `(reality is nearer 1.3×). That is warmup sets dragging the line down. Pushing toward the envelope `
+        + `(<strong>q=${hi.q}</strong>) brings it to <strong>β = ${hi.beta.toFixed(2)}</strong>. `
+        + `The model uses q = 0.9.<br><br>`
+        + `Even the envelope fit here is steeper than the truth, because this pooled version ignores that strength `
+        + `changed over the years covered. The full model gives each period its own level, which is what closes the gap.`;
+}
+
+/* ── 4. Load-rep curve explorer (vs literature formulas) ── */
+function renderCurveExplorer() {
+    const beta = +document.getElementById('beta-slider').value;
+    const oneRm = +document.getElementById('onerm-slider').value;
+    document.getElementById('beta-out').textContent = `β = ${beta.toFixed(3)}`;
+    document.getElementById('onerm-out').textContent = `${oneRm} lb`;
+    const reps = Array.from({ length: 12 }, (_, i) => i + 1);
+
+    const ours = reps.map(r => oneRm * Math.pow(r, -beta));
+    const epley = reps.map(r => oneRm / (1 + r / 30));
+    const brzycki = reps.map(r => oneRm * (1.0278 - 0.0278 * r));
+    const lombardi = reps.map(r => oneRm * Math.pow(r, -0.10));
+
+    Plotly.react('curve-explorer', [
+        { x: reps, y: ours, type: 'scatter', mode: 'lines+markers', name: `This model (β=${beta.toFixed(2)})`,
+          line: { color: token('--lg-gold'), width: 3.5 }, marker: { size: 6 } },
+        { x: reps, y: lombardi, type: 'scatter', mode: 'lines', name: 'Lombardi 1989 (β fixed 0.10)',
+          line: { color: token('--lg-success'), width: 2, dash: 'dash' } },
+        { x: reps, y: epley, type: 'scatter', mode: 'lines', name: 'Epley 1985',
+          line: { color: token('--lg-info'), width: 2, dash: 'dot' } },
+        { x: reps, y: brzycki, type: 'scatter', mode: 'lines', name: 'Brzycki 1993',
+          line: { color: token('--lg-highlight'), width: 2, dash: 'dot' } },
+    ], baseLayout('Predicted max weight (lb)', {
+        showlegend: true, legend: { orientation: 'h', y: -0.24 }, height: 380,
+        xaxis: { gridcolor: token('--lg-border'), zeroline: false, title: { text: 'Reps', font: { size: 11 } }, dtick: 1 },
+    }), PC);
+
+    const pct10 = Math.pow(10, -beta) * 100;
+    document.getElementById('curve-callout').innerHTML =
+        `At <strong>β = ${beta.toFixed(3)}</strong>, a 10-rep max is <strong>${pct10.toFixed(0)}%</strong> of the `
+        + `one-rep max (${(oneRm * Math.pow(10, -beta)).toFixed(0)} of ${oneRm} lb). `
+        + (Math.abs(beta - 0.10) < 0.006
+            ? `<br><br><strong>At β = 0.10 this model is exactly Lombardi's formula</strong> — the green dashed line is hidden underneath. That is the point: the functional form is his, and the only difference is that β is estimated rather than assumed.`
+            : (pct10 < 55
+                ? `<br><br>That is outside the physiological range — published tables put a 10RM around 70–75% of 1RM, which is why β is bounded to [0.03, 0.35] in the model.`
+                : `<br><br>Published load-rep tables put a 10RM at roughly 70–75% of 1RM, i.e. β ≈ 0.12–0.15.`));
+}
+
+/* ── 4b. Rep distribution ── */
+function renderReps(dist) {
+    if (!dist || !dist.reps) return;
+    const inRange = dist.reps.map(r => r >= dist.p10 && r <= dist.p90);
+    Plotly.newPlot('reps-chart', [{
+        type: 'bar', x: dist.reps, y: dist.counts,
+        marker: { color: inRange.map(v => token(v ? '--lg-gold' : '--lg-muted-chart')) },
+        hovertemplate: '%{x} reps — %{y} sets<extra></extra>',
+    }], baseLayout('Sets', {
+        height: 300, xaxis: { gridcolor: token('--lg-border'), zeroline: false, title: { text: 'Reps in set', font: { size: 11 } } },
+        shapes: [{ type: 'line', x0: 1, x1: 1, yref: 'paper', y0: 0, y1: 1, line: { color: token('--lg-danger'), width: 2, dash: 'dot' } }],
+        annotations: [{ x: 1, yref: 'paper', y: 1, text: '1RM is estimated here', showarrow: true, arrowhead: 2, ax: 70, ay: -6,
+            font: { size: 11, color: token('--lg-danger') }, arrowcolor: token('--lg-danger') }],
+    }), PC);
+    document.getElementById('reps-callout').innerHTML =
+        `Reps sit almost entirely between <strong>${dist.p10.toFixed(0)} and ${dist.p90.toFixed(0)}</strong> (median ${dist.p50.toFixed(0)}). `
+        + `One-rep sets are essentially absent, so a 1RM is extrapolated rather than measured.`;
+}
+
+// Garmin's variant/family keys are raw enum-ish strings; these turn them into
+// something readable without needing a lookup table shipped to the browser.
+function prettyVariant(name) {
+    return String(name)
+        .replace(/__unassigned$/, ' (unlabelled)')
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, c => c.toUpperCase());
+}
+const prettyFamily = prettyVariant;
+
+/* ── Variant conversion: fitted factors vs their independent cross-check ── */
+function renderConversion(vc) {
+    if (!vc || !vc.factors || !vc.factors.length) return;
+    // Only variants that need converting say anything -- a reference is 1.0 by
+    // construction, not by measurement.
+    const rows = vc.factors.filter(f => f.variant !== f.reference);
+    if (!rows.length) return;
+    rows.sort((a, b) => b.factor - a.factor);
+
+    const labels = rows.map(r => prettyVariant(r.variant));
+    const ok = rows.map(r => r.identified);
+    // .chart-host only sets a min-height, and Plotly.Plots.resize (fired when
+    // the reference panel slides) re-measures the container -- so a taller
+    // chart must own an explicit height or it collapses and overlaps whatever
+    // follows it.
+    const convHeight = Math.max(280, rows.length * 34 + 120);
+    document.getElementById('conversion-chart').style.height = convHeight + 'px';
+    Plotly.newPlot('conversion-chart', [
+        {
+            type: 'bar', orientation: 'h', name: 'Fitted (regression)',
+            y: labels, x: rows.map(r => r.factor),
+            marker: { color: ok.map(v => token(v ? '--lg-gold' : '--lg-muted-chart')) },
+            hovertemplate: '%{y}<br>fitted ×%{x:.2f}<extra></extra>',
+        },
+        {
+            type: 'scatter', mode: 'markers', name: 'Cross-check (paired sessions)',
+            y: labels, x: rows.map(r => r.paired_ratio),
+            marker: { color: token('--lg-highlight'), size: 9, symbol: 'diamond' },
+            hovertemplate: '%{y}<br>cross-check ×%{x:.2f}<extra></extra>',
+        },
+    ], baseLayout('', {
+        height: convHeight,
+        margin: { l: 230, r: 20, t: 8, b: 44 },
+        showlegend: true, legend: { orientation: 'h', y: -0.18 },
+        xaxis: {
+            gridcolor: token('--lg-border'), zeroline: false,
+            title: { text: 'Factor to reach the reference variant’s scale (×)', font: { size: 11 } },
+        },
+        yaxis: { gridcolor: token('--lg-border'), zeroline: false, automargin: true },
+        shapes: [{
+            type: 'line', x0: 1, x1: 1, yref: 'paper', y0: 0, y1: 1,
+            line: { color: token('--lg-border-h'), width: 1, dash: 'dot' },
+        }],
+    }), PC);
+
+    const dropped = rows.filter(r => !r.identified);
+    document.getElementById('conversion-callout').innerHTML =
+        `Bars are the regression estimate, diamonds the independent paired-session estimate. `
+        + `They land close together for every factor that is used — the dumbbell bench conversion is `
+        + `<strong>×${(rows.find(r => r.variant === 'DUMBBELL_BENCH_PRESS') || {}).factor?.toFixed(2) || '—'}</strong> `
+        + `by regression and ×${(rows.find(r => r.variant === 'DUMBBELL_BENCH_PRESS') || {}).paired_ratio?.toFixed(2) || '—'} by the cross-check, `
+        + `from two methods sharing no assumptions. `
+        + (dropped.length
+            ? `Greyed bars are the <strong>${dropped.length}</strong> label(s) where the checks disagree; these are excluded.`
+            : '');
+}
+
+/* ── Does converting actually help? Scatter before vs after ── */
+function renderConversionScatter(vc) {
+    const rows = (vc && vc.scatter) || [];
+    if (!rows.length) return;
+    const labels = rows.map(r => prettyFamily(r.family));
+    document.getElementById('conversion-scatter-chart').style.height = '320px';
+    Plotly.newPlot('conversion-scatter-chart', [
+        {
+            type: 'bar', name: 'Pooled, unconverted', x: labels,
+            y: rows.map(r => r.raw_scatter), marker: { color: token('--lg-muted-chart') },
+            hovertemplate: '%{x}<br>unconverted scatter %{y:.3f}<extra></extra>',
+        },
+        {
+            type: 'bar', name: 'Converted', x: labels,
+            y: rows.map(r => r.converted_scatter), marker: { color: token('--lg-gold') },
+            hovertemplate: '%{x}<br>converted scatter %{y:.3f}<extra></extra>',
+        },
+    ], baseLayout('Scatter around 60-day median (log units)', {
+        height: 320, barmode: 'group',
+        showlegend: true, legend: { orientation: 'h', y: -0.28 },
+        xaxis: { gridcolor: token('--lg-border'), zeroline: false, automargin: true },
+    }), PC);
+
+    const best = rows[0];
+    const nil = rows[rows.length - 1];
+    document.getElementById('conversion-scatter-callout').innerHTML =
+        `If the factors are real, converting should visibly settle a family's series down. `
+        + `<strong>${prettyFamily(best.family)}</strong> scatter drops `
+        + `<strong>${best.improvement_pct.toFixed(0)}%</strong> `
+        + `(${best.raw_scatter.toFixed(2)} → ${best.converted_scatter.toFixed(2)}). `
+        + `The negative control matters just as much: <strong>${prettyFamily(nil.family)}</strong>'s variants all `
+        + `sit within a few percent of each other, so there is nothing to correct and the improvement is `
+        + `<strong>${nil.improvement_pct.toFixed(0)}%</strong> — the method does nothing where nothing is wrong.`;
+}
+
+/* ── 5. Knot spacing demo ── */
+function renderKnots() {
+    const bias = REPORT.warmup_bias;
+    const spacing = +document.getElementById('knot-slider').value;
+    document.getElementById('knot-out').textContent = `${spacing} days`;
+    if (!bias) return;
+
+    // Illustrative: take the real bench set cloud, bucket by knot window and
+    // take a high quantile in each — a cheap stand-in for the fitted level.
+    const pts = REPORT._sessionSeries;
+    if (!pts) return;
+    const t0 = pts[0].t;
+    const buckets = new Map();
+    pts.forEach(p => {
+        const k = Math.floor((p.t - t0) / (spacing * 86400000));
+        if (!buckets.has(k)) buckets.set(k, []);
+        buckets.get(k).push(p.v);
+    });
+    const keys = [...buckets.keys()].sort((a, b) => a - b);
+    const kx = keys.map(k => new Date(t0 + (k + 0.5) * spacing * 86400000).toISOString().slice(0, 10));
+    const ky = keys.map(k => { const a = buckets.get(k).slice().sort((x, y) => x - y); return a[Math.floor(a.length * 0.9)]; });
+
+    Plotly.react('knot-chart', [
+        { type: 'scatter', mode: 'markers', name: 'Session top sets', x: pts.map(p => p.d), y: pts.map(p => p.v),
+          marker: { color: token('--lg-muted-chart'), size: 4, opacity: 0.3 } },
+        { type: 'scatter', mode: 'lines+markers', name: `Level on ${spacing}-day knots`, x: kx, y: ky,
+          line: { color: token('--lg-gold'), width: 3 }, marker: { size: 5 } },
+    ], baseLayout('Bench press top set (lb)', {
+        showlegend: true, legend: { orientation: 'h', y: -0.22 }, height: 340,
+    }), PC);
+}
+
+/* ── 5b. Rep variation ── */
+function renderRepVar(rows) {
+    // Only external-load exercises are ever fit with a load-rep curve, so
+    // showing assisted/bodyweight/mixed ones here would imply they're in
+    // scope for a beta they never get.
+    const withSd = rows.filter(r => r.rep_sd !== null && r.rep_sd !== undefined
+            && r.n_loaded_sets >= 50 && r.load_type === 'external_load')
+        .sort((a, b) => a.rep_sd - b.rep_sd);
+    if (!withSd.length) return;
+    const THRESH = 1.5;
+    Plotly.newPlot('repvar-chart', [{
+        type: 'bar', orientation: 'h', x: withSd.map(r => r.rep_sd), y: withSd.map(r => label(r.exercise)),
+        marker: { color: withSd.map(r => token(r.rep_sd >= THRESH ? '--lg-gold' : '--lg-muted-chart')) },
+        hovertemplate: '%{y}<br>rep sd = %{x:.2f}<extra></extra>',
+    }], baseLayout('', {
+        height: Math.max(240, withSd.length * 30), margin: { l: 150, r: 20, t: 10, b: 50 },
+        xaxis: { gridcolor: token('--lg-border'), zeroline: false, title: { text: 'Standard deviation of reps', font: { size: 11 } } },
+        shapes: [{ type: 'line', x0: THRESH, x1: THRESH, yref: 'paper', y0: 0, y1: 1, line: { color: token('--lg-danger'), width: 2, dash: 'dot' } }],
+    }), PC);
+    const free = withSd.filter(r => r.rep_sd >= THRESH).map(r => label(r.exercise));
+    const pooled = withSd.filter(r => r.rep_sd < THRESH).map(r => label(r.exercise));
+    document.getElementById('repvar-callout').innerHTML =
+        `Only <strong>${free.join(', ') || 'none'}</strong> vary enough in reps to estimate their own β `
+        + `(dotted line = threshold). <strong>${pooled.join(', ')}</strong> borrow the pooled value — `
+        + `not a shortcut, but the honest response to data that cannot identify the parameter.`;
+}
+
+/* ── 6. Convergence ── */
+function renderConvergence(hist, curves) {
+    if (!hist || !hist.length) return;
+    // Scope goes in the axis label, not just the tooltip: the one bar that
+    // reaches 1.01 was a 2-exercise subset, and reading it as a full-dataset
+    // result is exactly the mistake that was made once already.
+    Plotly.newPlot('convergence-chart', [{
+        type: 'bar',
+        x: hist.map(h => `${h.label}<br><span style="font-size:10px">(${h.scope || ''})</span>`),
+        y: hist.map(h => h.rhat),
+        marker: { color: hist.map(h => token(h.rhat <= 1.01 ? '--lg-success' : (h.rhat > 2 ? '--lg-danger' : '--lg-warning'))) },
+        text: hist.map(h => h.rhat.toFixed(2)), textposition: 'outside',
+        customdata: hist.map(h => [h.note, h.scope || '']),
+        hovertemplate: '%{x}<br>r-hat = %{y:.2f}<br>scope: %{customdata[1]}<br>%{customdata[0]}<extra></extra>',
+    }], baseLayout('max r-hat (lower is better)', {
+        height: 420, margin: { l: 64, r: 16, t: 24, b: 150 },
+        shapes: [{ type: 'line', xref: 'paper', x0: 0, x1: 1, y0: 1.01, y1: 1.01, line: { color: token('--lg-success'), width: 2, dash: 'dot' } }],
+    }), PC);
+
+    const fitted = (curves || {}).n_fitted || 0;
+    const banner = document.getElementById('fit-status-banner');
+    banner.className = 'status-banner ' + (fitted ? 'ok' : 'bad');
+    banner.innerHTML = fitted
+        ? `<strong>Converged.</strong> ${fitted} exercise curves are stored and in use.`
+        : `<strong>Current status: not converged, nothing stored.</strong> The pipeline refuses to persist a fit that `
+          + `fails its r-hat check, so the analysed layer stays empty rather than gaining confident-looking nonsense, `
+          + `and the Fitness tab falls back to the simpler top-set estimate. This is the model working as intended — `
+          + `a non-converged posterior still produces tight-looking intervals, which is precisely what makes it dangerous.`;
+
+    document.getElementById('convergence-callout').innerHTML =
+        `<strong>Read the scope labels.</strong> The single green bar was a 2-exercise subset — the same settings on the `
+        + `full dataset land at 1.22. That distinction was briefly missed here, which is precisely why scope is now `
+        + `printed on the axis rather than buried in a tooltip.<br><br>`
+        + `<strong>Two experiments did the real work, and both were negative.</strong> Removing β as a free parameter `
+        + `made things <em>worse</em> (2.10 vs 1.54), ruling β out. Fitting bench press <em>alone</em> was worse again `
+        + `(1.83), ruling out the idea that the joint model was simply too big — the cross-exercise pooling is helping, `
+        + `not hurting.<br><br>`
+        + `<strong>Where that leaves it.</strong> r-hat isn't monotonic in problem size (1.83 at one exercise, 1.01 at `
+        + `two, 1.22 at eleven), which points at a multi-modal posterior rather than a scaling wall. The leading suspect `
+        + `is now the Asymmetric Laplace itself: it is a pseudo-likelihood rather than a generative model, and its `
+        + `geometry is known to be awkward. Replacing it with an explicit model of submaximal effort is the next thing `
+        + `to try — a bigger change than anything attempted so far.`;
+}
+
+/* ── 7. HRV lags ── */
+function renderLags(lags) {
+    if (!lags) { document.getElementById('lag-callout').textContent = 'Not enough overlapping HRV and activity data yet.'; return; }
+    const sig = lags.lags.map(l => Math.abs(l.t) > 2);
+    Plotly.newPlot('lag-chart', [{
+        type: 'bar', x: lags.lags.map(l => l.label), y: lags.lags.map(l => l.r),
+        marker: { color: sig.map(v => token(v ? '--lg-success' : '--lg-muted-chart')) },
+        text: lags.lags.map(l => `t=${l.t}`), textposition: 'outside',
+        hovertemplate: '%{x}<br>partial r = %{y:.3f}<extra></extra>',
+    }], baseLayout('Partial correlation with HRV', { height: 330, margin: { l: 64, r: 16, t: 24, b: 60 } }), PC);
+
+    const best = lags.lags.reduce((a, b) => (Math.abs(b.t) > Math.abs(a.t) ? b : a));
+    const same = lags.lags.find(l => l.label.includes('same day'));
+    document.getElementById('lag-callout').innerHTML =
+        `Across <strong>n = ${lags.n}</strong> days, training shows up in HRV on a <strong>delay</strong>: same-day load does `
+        + `essentially nothing (r = ${same ? same.r : '—'}, t = ${same ? same.t : '—'}), while the strongest signal is `
+        + `<strong>${best.label.toLowerCase()}</strong> (r = ${best.r}, t = ${best.t}).<br><br>`
+        + `The reverse direction — does feeling good today make you train harder tomorrow? — comes back `
+        + `<strong>flat (r = ${lags.reverse.r}, t = ${lags.reverse.t})</strong>. That matters: the self-selection confound `
+        + `that normally wrecks this kind of analysis appears to be absent here. These remain <em>adjusted associations</em>, `
+        + `not established causal effects.`;
+}
+
+/* ── 8/9. Roadmap + provenance ── */
+const ROADMAP = [
+    { state: 'done', label: 'Done', text: '<b>Exercise load types.</b> Separates real load, machine assistance and bodyweight. Fixed an inverted pull-up trend and all-NaN plank series.' },
+    { state: 'done', label: 'Done', text: '<b>Review pipeline.</b> Corrections to Garmin\'s exercise classifier reach the models only once accepted.' },
+    { state: 'done', label: 'Done', text: '<b>Relative / small-multiple progression views.</b> Lifts spanning 13 lb to 280 lb are readable on one screen.' },
+    { state: 'curve', text: '' },  // filled in from live fit status
+    { state: 'next', label: 'Next', text: '<b>Daily panel.</b> One row per day joining wellness outcomes to training-load features (acute, chronic, ratio, days since last session).' },
+    { state: 'next', label: 'Next', text: '<b>Predictive baseline.</b> Next-day HRV / resting HR / sleep score, scored by forward-chaining cross-validation against a persistence baseline — if it can\'t beat persistence, that gets reported, not buried.' },
+    { state: 'next', label: 'Next', text: '<b>Distributed-lag model.</b> Full posterior over the lag profile with AR errors, controlling for sleep, stress and a slow seasonal term.' },
+    { state: 'next', label: 'Next', text: '<b>VO2max.</b> No data exists yet; needs a puller before it can be modelled at all.' },
+];
+function renderRoadmap() {
+    const fitted = ((REPORT || {}).strength_curves || {}).n_fitted || 0;
+    const items = ROADMAP.map(r => {
+        if (r.state !== 'curve') return r;
+        return fitted
+            ? { state: 'done', label: 'Done', text: `<b>Load–rep curve fit.</b> Converges and is in use — ${fitted} exercise curves stored. Took a centered random walk plus a much longer sampler warmup; the four earlier attempts are charted in section 6.` }
+            : { state: 'open', label: 'Blocked', text: '<b>Load–rep curve fit.</b> Validated on synthetic data but not yet stored for the real dataset — either the fit is still running or its last run failed the convergence gate.' };
+    });
+    document.getElementById('roadmap-list').innerHTML = items.map(r =>
+        `<div class="road-item"><span class="road-state road-${r.state}">${r.label}</span><div class="road-body">${r.text}</div></div>`
+    ).join('');
+}
+const PROV_BADGE = {
+    literature: ['badge-lit', 'Literature'],
+    'literature-extended': ['badge-lit-ext', 'Literature, extended'],
+    'literature-contested': ['badge-contested', 'Literature, contested'],
+    bespoke: ['badge-bespoke', 'Bespoke'],
+    unsupported: ['badge-unsupported', 'No research basis'],
+};
+function renderProvenance(items) {
+    document.getElementById('provenance-list').innerHTML = (items || []).map(p => {
+        const [cls, txt] = PROV_BADGE[p.kind] || ['badge-lit', p.kind];
+        return `<div class="prov-item"><div class="prov-head"><span class="badge ${cls}">${txt}</span>`
+             + `<span class="prov-name">${p.name}</span></div><div class="prov-detail">${p.detail}</div></div>`;
+    }).join('');
+}
+
+/* ── docked symbol glossary ── */
+// [key, latex, description, unit]
+const SYMBOLS = [
+    ['__g', 'Load–rep curve'],
+    ['w', 'w', 'weight lifted in a set', 'lb'],
+    ['r', 'r', 'reps completed in that set', 'count'],
+    ['onerm', '\\text{1RM}', 'one-rep max — the load you could lift exactly once. Extrapolated here, not observed', 'lb'],
+    ['beta', '\\beta_e', 'rep-decay exponent: how fast capacity falls as reps rise. A 10-rep max is 10^(−β) of the 1RM, so β=0.15 → ~71%', 'dimensionless'],
+
+    ['__g2', 'Strength over time'],
+    ['alpha', '\\alpha_e(t)', 'latent strength level — log of the weight you could lift for one rep, on date t', 'log lb'],
+    ['sigma_walk', '\\sigma_{\\text{walk}}', 'how much the strength level may drift between knots', 'log lb per 30 days'],
+    ['lambda', '\\lambda', 'interpolation weight between the two knots surrounding a session (0 = on the earlier knot, 1 = on the later)', '0–1'],
+    ['k', 'k', 'knot index — a control point on the timeline, one per 30 days', 'index'],
+
+    ['__g3', 'Likelihood'],
+    ['q', 'q', 'quantile the fitted curve tracks. 0.9 keeps it near the top of the set cloud, so it measures capacity rather than average effort', '0–1'],
+    ['b', 'b', 'scale of the Asymmetric Laplace — how tightly sets cluster around the fitted curve', 'log lb'],
+
+    ['__g4', 'Pooling across exercises'],
+    ['mu_beta', '\\mu_\\beta', 'shared rep-decay exponent across all exercises, on the logit scale', 'logit'],
+    ['sigma_beta', '\\sigma_\\beta', 'how far one exercise may drift from that shared value', 'logit'],
+    ['z', 'z_e', "exercise e's own standardised deviation from the shared value", 'dimensionless'],
+    ['beta_min', '\\beta_{\\min}', 'lower physiological bound on β (0.03)', 'dimensionless'],
+    ['beta_max', '\\beta_{\\max}', 'upper physiological bound on β (0.35). Past this a 10RM would be under 45% of 1RM, which bodies do not do', 'dimensionless'],
+
+    ['__g5', 'Indices'],
+    ['e', 'e', 'exercise variant (e.g. barbell vs dumbbell bench)', 'index'],
+    ['t', 't', 'session date', 'date'],
+    ['i', 'i', 'set within a session', 'index'],
+];
+
+function buildGlossary() {
+    const table = document.getElementById('symbols');
+    if (!table) return;
+    table.innerHTML = SYMBOLS.map((row) => {
+        if (row[0].startsWith('__g')) return `<tr class="sym-group"><td colspan="2">${row[1]}</td></tr>`;
+        const [key, latex, desc, unit] = row;
+        return `<tr class="sym-row" data-sym="${key}"><td class="sym">\\(${latex}\\)</td>`
+             + `<td>${desc}<span class="unit">${unit}</span></td></tr>`;
+    }).join('');
+    // The panel is injected after KaTeX auto-render has already run, so its
+    // rows have to be typeset explicitly or they show raw \(...\) source.
+    if (window.renderMathInElement) {
+        renderMathInElement(table, {
+            delimiters: [{ left: '\\(', right: '\\)', display: false }], throwOnError: false,
+        });
+    }
+}
+
+const GLOSS_KEY = 'garmin.modeling.glossary.open';
+
+function setGlossaryOpen(open, persist = true) {
+    const panel = document.getElementById('glossary');
+    const btn = document.getElementById('gloss-toggle');
+    if (!panel) return;
+    panel.dataset.open = open ? 'true' : 'false';
+    document.getElementById('pane')?.classList.toggle('gloss-open', open);
+    // Trap 3: Plotly measures its own width, so it has to be told the layout
+    // moved -- after the slide finishes, not during it.
+    setTimeout(() => {
+        document.querySelectorAll('.chart-host').forEach((el) => {
+            if (el.data) Plotly.Plots.resize(el);
+        });
+    }, 240);
+    if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (persist) {
+        try { localStorage.setItem(GLOSS_KEY, open ? '1' : '0'); } catch (e) { /* private mode */ }
+    }
+}
+
+function highlightSymbols(keys) {
+    const panel = document.getElementById('glossary');
+    if (!panel) return;
+    const rows = panel.querySelectorAll('[data-sym]');
+    if (!keys) {
+        panel.classList.remove('is-filtered');
+        rows.forEach((r) => r.classList.remove('sym-hit'));
+        return;
+    }
+    const want = new Set(keys);
+    panel.classList.add('is-filtered');
+    let first = null;
+    rows.forEach((r) => {
+        const hit = want.has(r.dataset.sym);
+        r.classList.toggle('sym-hit', hit);
+        if (hit && !first) first = r;
+    });
+    const scroller = panel.querySelector('.glossary-scroll');
+    if (first && scroller) {
+        const fr = first.getBoundingClientRect(), sr = scroller.getBoundingClientRect();
+        if (fr.top < sr.top || fr.bottom > sr.bottom) {
+            const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            scroller.scrollTo({ top: scroller.scrollTop + (fr.top - sr.top) - 12,
+                                behavior: reduce ? 'auto' : 'smooth' });
+        }
+    }
+}
+
+function bindGlossary() {
+    const panel = document.getElementById('glossary');
+    if (!panel) return;
+
+    document.getElementById('gloss-toggle')?.addEventListener('click', () => {
+        setGlossaryOpen(panel.dataset.open !== 'true');
+    });
+
+    document.querySelectorAll('.eqn').forEach((eq) => {
+        const keys = (eq.dataset.syms || '').split(/\s+/).filter(Boolean);
+        // Filter on hover only when already open -- opening on hover is
+        // jarring and easy to trigger by accident.
+        const on = () => { if (panel.dataset.open === 'true') highlightSymbols(keys); };
+        const off = () => highlightSymbols(null);
+        eq.addEventListener('mouseenter', on);
+        eq.addEventListener('mouseleave', off);
+        eq.addEventListener('focus', on);
+        eq.addEventListener('blur', off);
+
+        const toggle = () => {
+            if (panel.dataset.open === 'true') { highlightSymbols(null); setGlossaryOpen(false); return; }
+            setGlossaryOpen(true);
+            setTimeout(() => highlightSymbols(keys), 220);  // let the slide finish first
+        };
+        eq.setAttribute('role', 'button');
+        eq.setAttribute('title', 'Show these symbols in the reference panel (click again to close)');
+        eq.addEventListener('click', toggle);
+        eq.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggle(); }
+        });
+    });
+
+    // Reverse direction: hovering a definition marks the equations using it.
+    panel.addEventListener('mouseover', (ev) => {
+        const row = ev.target.closest('[data-sym]');
+        if (!row) return;
+        document.querySelectorAll('.eqn').forEach((eq) => {
+            const keys = (eq.dataset.syms || '').split(/\s+/);
+            eq.classList.toggle('eqn-active', keys.includes(row.dataset.sym));
+        });
+    });
+    panel.addEventListener('mouseleave', () => {
+        document.querySelectorAll('.eqn.eqn-active').forEach((eq) => eq.classList.remove('eqn-active'));
+    });
+
+    document.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Escape' && panel.dataset.open === 'true') setGlossaryOpen(false);
+    });
+
+    let stored = null;
+    try { stored = localStorage.getItem(GLOSS_KEY); } catch (e) { /* private mode */ }
+    const wide = window.matchMedia('(min-width: 1180px)').matches;
+    setGlossaryOpen(stored === null ? wide : stored === '1', false);
+
+    // Trap 1: only enable the slide once the resting position is set, or a
+    // transition started in a hidden container sticks forever.
+    const pane = document.getElementById('pane');
+    const enableAnim = () => {
+        if (panel.classList.contains('is-animated')) return;
+        panel.getAnimations().forEach((a) => a.cancel());
+        pane?.getAnimations().forEach((a) => a.cancel());
+        panel.classList.add('is-animated');
+        pane?.classList.add('gloss-anim');
+    };
+    requestAnimationFrame(() => requestAnimationFrame(enableAnim));
+    setTimeout(enableAnim, 120);   // rAF never fires in a background tab
+}
+
+async function loadReport(source) {
+    const status = document.getElementById('report-status');
+    status.textContent = 'Loading…';
+    try {
+        const res = await fetch('/api/model_report_data?source=' + encodeURIComponent(source));
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        REPORT = d;
+
+        // Session-level series for the knot demo: highest weight per date.
+        if (d.warmup_bias && d.warmup_bias.session_series) {
+            REPORT._sessionSeries = d.warmup_bias.session_series.map(s => ({ d: s.date, t: Date.parse(s.date), v: s.top_weight }));
+        }
+
+        renderAsymmetricLaplace();
+        renderLogitSquash();
+        renderRandomWalk();
+        renderKpis(d);
+        renderCoverage(d.coverage || []);
+        renderStructure(d.session_structure);
+        renderTempo(d.tempo_quality);
+        renderLoadTypes(d.load_types || []);
+        renderWarmup();
+        renderCurveExplorer();
+        renderReps(d.rep_distribution);
+        renderConversion(d.variant_conversion);
+        renderConversionScatter(d.variant_conversion);
+        renderKnots();
+        renderRepVar(d.load_types || []);
+        renderConvergence(d.convergence_history, d.strength_curves);
+        renderLags(d.wellness_lags);
+        renderRoadmap();
+        renderProvenance(d.provenance);
+
+        status.textContent = `${source} · generated ${d.generated_at ? new Date(d.generated_at).toLocaleDateString() : '—'}`;
+        if (window.renderMathInElement) {
+            renderMathInElement(document.body, {
+                delimiters: [{ left: '$$', right: '$$', display: true }, { left: '\\(', right: '\\)', display: false }],
+                throwOnError: false,
+            });
+        }
+        buildGlossary();
+        bindGlossary();
+    } catch (e) {
+        status.textContent = 'Error: ' + e.message;
+    }
+}
+
+['q-slider'].forEach(id => document.getElementById(id).addEventListener('input', renderWarmup));
+document.getElementById('ald-slider').addEventListener('input', renderAsymmetricLaplace);
+document.getElementById('logit-slider').addEventListener('input', renderLogitSquash);
+document.getElementById('walk-slider').addEventListener('input', renderRandomWalk);
+['beta-slider', 'onerm-slider'].forEach(id => document.getElementById(id).addEventListener('input', renderCurveExplorer));
+document.getElementById('knot-slider').addEventListener('input', renderKnots);
+document.getElementById('source-select').addEventListener('change', (e) => loadReport(e.target.value));
+
+loadReport('local');
+</script>
+{% endblock %}

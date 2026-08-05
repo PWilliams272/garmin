@@ -95,9 +95,8 @@
     </div>
 
 <script>
-function token(name) {
-    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-}
+// token() is defined once in static/js/tokens.js -- it resolves color-mix()
+// tokens that getPropertyValue would otherwise return unparsed.
 
 function coerceDate(value) {
     return value ? new Date(value + 'T00:00:00') : null;
@@ -327,7 +326,7 @@ function renderAnalyzedChart(config, anchorDate) {
         traces.push({
             x: gpTrend.map(t => t.date).concat(gpTrend.map(t => t.date).slice().reverse()),
             y: gpTrend.map(t => t.upper_68).concat(gpTrend.map(t => t.lower_68).slice().reverse()),
-            type: 'scatter', mode: 'lines', fill: 'toself', fillcolor: color + '33',
+            type: 'scatter', mode: 'lines', fill: 'toself', fillcolor: withAlpha(color, 0.2),
             line: { color: 'transparent' }, hoverinfo: 'skip', showlegend: false,
         });
     }
@@ -348,7 +347,7 @@ function renderAnalyzedChart(config, anchorDate) {
         traces.push({
             x: stsTrend.map(t => t.date).concat(stsTrend.map(t => t.date).slice().reverse()),
             y: stsTrend.map(t => t.upper_68).concat(stsTrend.map(t => t.lower_68).slice().reverse()),
-            type: 'scatter', mode: 'lines', fill: 'toself', fillcolor: stsColor + '33',
+            type: 'scatter', mode: 'lines', fill: 'toself', fillcolor: withAlpha(stsColor, 0.2),
             line: { color: 'transparent' }, hoverinfo: 'skip', showlegend: false,
         });
     }
@@ -409,10 +408,10 @@ function renderAnalyzedChart(config, anchorDate) {
     const shapes = [];
     if (sigma) {
         shapes.push(
-            { type: 'rect', xref: 'x9 domain', x0: 0, x1: 1, yref: 'y9', y0: -sigma, y1: sigma, fillcolor: stsColor + '1a', line: { width: 0 }, layer: 'below' },
+            { type: 'rect', xref: 'x9 domain', x0: 0, x1: 1, yref: 'y9', y0: -sigma, y1: sigma, fillcolor: withAlpha(stsColor, 0.1), line: { width: 0 }, layer: 'below' },
             { type: 'line', xref: 'x9 domain', x0: 0, x1: 1, yref: 'y9', y0: 2 * sigma, y1: 2 * sigma, line: { color: stsColor, width: 1, dash: 'dot' } },
             { type: 'line', xref: 'x9 domain', x0: 0, x1: 1, yref: 'y9', y0: -2 * sigma, y1: -2 * sigma, line: { color: stsColor, width: 1, dash: 'dot' } },
-            { type: 'rect', xref: 'x10 domain', x0: 0, x1: 1, yref: 'y11', y0: -sigma, y1: sigma, fillcolor: stsColor + '1a', line: { width: 0 }, layer: 'below' },
+            { type: 'rect', xref: 'x10 domain', x0: 0, x1: 1, yref: 'y11', y0: -sigma, y1: sigma, fillcolor: withAlpha(stsColor, 0.1), line: { width: 0 }, layer: 'below' },
             { type: 'line', xref: 'x10 domain', x0: 0, x1: 1, yref: 'y11', y0: 2 * sigma, y1: 2 * sigma, line: { color: stsColor, width: 1, dash: 'dot' } },
             { type: 'line', xref: 'x10 domain', x0: 0, x1: 1, yref: 'y11', y0: -2 * sigma, y1: -2 * sigma, line: { color: stsColor, width: 1, dash: 'dot' } },
         );
