@@ -255,6 +255,26 @@ class CuratedDataStore:
         )
 
     @staticmethod
+    def daily_panel_path(dataset: str) -> str:
+        return f"curated/analyzed/{dataset}/daily_panel.parquet"
+
+    def load_daily_panel(self, dataset: str = "panel") -> pd.DataFrame:
+        """One row per calendar day: wellness outcomes, training load, rolling
+        load features and calendar controls (see garmin.analysis.daily_panel).
+        Nulls in outcome columns mean unmeasured; zeros in load columns mean a
+        genuine rest day."""
+        return self._read_df_or_empty(self.daily_panel_path(dataset))
+
+    def write_daily_panel(self, dataset: str, df: pd.DataFrame) -> None:
+        if df.empty:
+            return
+        self.file_manager.write_df(
+            self._prepare_for_parquet(df),
+            self.daily_panel_path(dataset),
+            format="parquet",
+        )
+
+    @staticmethod
     def viewer_cache_path(name: str) -> str:
         return f"viewer_cache/{name}.json"
 

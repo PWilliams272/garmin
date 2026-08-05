@@ -1111,3 +1111,7 @@ def analyze_all(curated_store: CuratedDataStore) -> None:
     analyze_lifting(curated_store)
     infer_exercise_corrections(curated_store)
     analyze_health(curated_store)
+    # Deterministic aggregation, so it belongs in the daily run: everything in
+    # the predictive/causal work reads this rather than re-deriving load.
+    from garmin.analysis.daily_panel import analyze_daily_panel
+    analyze_daily_panel(curated_store)
