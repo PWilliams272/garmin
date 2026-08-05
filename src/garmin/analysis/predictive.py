@@ -165,8 +165,12 @@ def evaluate_target(panel: pd.DataFrame, target: str) -> dict | None:
             float(np.mean(np.abs(y_test - ridge.predict(scaler.transform(x_test)))))
         )
 
+        # Early stopping rather than a fixed 200 iterations: this is refit
+        # once per fold per target, and at 200 it dominated the whole offline
+        # report build (122s of a 123s run) while never once beating ridge.
         boosting = HistGradientBoostingRegressor(
-            max_iter=200, learning_rate=0.05, max_depth=3, random_state=0
+            max_iter=200, learning_rate=0.05, max_depth=3, random_state=0,
+            early_stopping=True, n_iter_no_change=10, validation_fraction=0.15,
         ).fit(x_train, y_train)
         errors["boosting"].append(
             float(np.mean(np.abs(y_test - boosting.predict(x_test))))
@@ -330,3 +334,40 @@ def format_report(results: list[dict]) -> str:
             f"{mae['boosting']:9.3f} {skill['ridge']:+8.1%} {skill['boosting']:+8.1%}  {verdict}"
         )
     return "\n".join(lines)
+
+
+def analyze_predictive_skill(curated_store) -> None:
+    """Evaluate next-day predictability and persist the result.
+
+    Refitting this per page load is not an option -- the fold-by-fold refits
+    take over a minute -- so it is computed once here and the web tier reads
+    the artifact, the same split the strength curves use.
+    """
+    from garmin.analysis.daily_panel import build_daily_panel
+
+    panel = build_daily_panel(curated_store)
+    if panel.empty:
+        print("No daily panel to evaluate predictability from.")
+        return
+    # Restrict to the period where wellness was actually being recorded;
+    # earlier years have activity but no HRV or sleep to predict.
+    measured = panel[panel[list(DEFAULT_TARGETS)].notna().any(axis=1)]
+
+    results = evaluate_all(measured)
+    ablations = [row for target in DEFAULT_TARGETS
+                 if (row := ablate_target(measured, target)) is not None]
+    if not results:
+        print("Not enough overlapping data to evaluate predictability.")
+        return
+
+    curated_store.write_predictive_skill("panel", {
+        "generated_at": pd.Timestamp.utcnow().isoformat(),
+        "n_days": int(len(measured)),
+        "date_min": str(measured["date"].min().date()),
+        "date_max": str(measured["date"].max().date()),
+        "results": results,
+        "ablations": ablations,
+    })
+    print(f"Evaluated predictability on {len(measured)} days:")
+    print(format_report(results))
+    print(format_ablation(ablations))

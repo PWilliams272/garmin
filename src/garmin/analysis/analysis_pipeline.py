@@ -1115,3 +1115,8 @@ def analyze_all(curated_store: CuratedDataStore) -> None:
     # the predictive/causal work reads this rather than re-deriving load.
     from garmin.analysis.daily_panel import analyze_daily_panel
     analyze_daily_panel(curated_store)
+    # Around a minute of sklearn refits, so it is persisted rather than
+    # recomputed per request -- but it is nowhere near the cost of the MCMC
+    # fits, so it can stay in the daily run.
+    from garmin.analysis.predictive import analyze_predictive_skill
+    analyze_predictive_skill(curated_store)

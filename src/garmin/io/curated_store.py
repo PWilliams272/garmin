@@ -275,6 +275,25 @@ class CuratedDataStore:
         )
 
     @staticmethod
+    def predictive_skill_path(dataset: str) -> str:
+        return f"curated/analyzed/{dataset}/predictive_skill.json"
+
+    def load_predictive_skill(self, dataset: str = "panel") -> dict | None:
+        """Out-of-sample skill for next-day wellness prediction, with the
+        training-ablation that says where that skill comes from (see
+        garmin.analysis.predictive). None when the evaluation hasn't run."""
+        try:
+            text = self.file_manager.read_text(self.predictive_skill_path(dataset))
+        except FileNotFoundError:
+            return None
+        return json.loads(text)
+
+    def write_predictive_skill(self, dataset: str, payload: dict) -> None:
+        self.file_manager.write_text(
+            json.dumps(payload, indent=2), self.predictive_skill_path(dataset)
+        )
+
+    @staticmethod
     def viewer_cache_path(name: str) -> str:
         return f"viewer_cache/{name}.json"
 

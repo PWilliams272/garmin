@@ -551,6 +551,32 @@ PROVENANCE = [
                   "other, and dropped when the two disagree.",
     },
     {
+        "name": "Acute:chronic workload ratio",
+        "kind": "literature-contested",
+        "detail": "Standard framing in the training-load literature and computed in the daily "
+                  "panel for convenience, but the injury-risk 'sweet spot' claim attached to it "
+                  "has been criticised heavily on statistical grounds. Carried here as a feature, "
+                  "never as a finding.",
+    },
+    {
+        "name": "Forward-chaining evaluation against a persistence baseline",
+        "kind": "literature",
+        "detail": "Standard practice for autocorrelated time series, not invented here. Random "
+                  "splits leak future into past and would flatter every model on this page; "
+                  "persistence is the baseline any wellness prediction has to clear before it "
+                  "means anything.",
+    },
+    {
+        "name": "Training-contribution ablation",
+        "kind": "bespoke",
+        "detail": "Refitting on the outcome's own history and then adding the training columns, "
+                  "to separate 'this signal is smoothable' from 'training predicts it'. Ordinary "
+                  "practice assembled for this question rather than a named method. Validated "
+                  "with a positive control: on synthetic data carrying a known lag-2 effect it "
+                  "failed until lagged load features were added, which is the only reason the "
+                  "null result it reports can be trusted.",
+    },
+    {
         "name": "This particular model assembly",
         "kind": "bespoke",
         "detail": "Combining a time-varying level, an estimated rep-decay exponent and an "
@@ -618,6 +644,47 @@ def _variant_conversion_evidence(detail: pd.DataFrame) -> dict:
     }
 
 
+def _predictive_evidence(store: CuratedDataStore) -> dict | None:
+    """Next-day predictability, read from the persisted evaluation.
+
+    Not recomputed here: the fold-by-fold refits take over a minute, and this
+    report is assembled on every cache build.
+    """
+    return store.load_predictive_skill("panel")
+
+
+def _panel_coverage(store: CuratedDataStore) -> list[dict]:
+    """How much of each panel column actually exists.
+
+    Coverage is the honest limit on everything in the predictive section --
+    HRV only starts in late 2022, so the ten years of activity before that
+    have nothing to predict.
+    """
+    panel = store.load_daily_panel("panel")
+    if panel.empty:
+        return []
+    interesting = [
+        "hrv", "resting_hr", "sleep_score", "stress", "body_battery_high",
+        "respiration_waking", "weight", "steps", "duration_min", "hr_load",
+    ]
+    rows = []
+    for column in interesting:
+        if column not in panel.columns:
+            continue
+        present = panel[column].notna()
+        if not present.any():
+            continue
+        rows.append({
+            "column": column,
+            "n_days": int(present.sum()),
+            "total_days": int(len(panel)),
+            "coverage": round(float(present.mean()), 4),
+            "first": str(panel.loc[present, "date"].min().date()),
+            "last": str(panel.loc[present, "date"].max().date()),
+        })
+    return rows
+
+
 def build_model_report(store: CuratedDataStore) -> dict:
     """Assemble every section of the Modeling tab payload."""
     detail = _reviewed_strength_detail(store)
@@ -640,4 +707,6 @@ def build_model_report(store: CuratedDataStore) -> dict:
         "coverage": _data_coverage(store),
         "strength_curves": _strength_curve_status(store),
         "variant_conversion": _variant_conversion_evidence(detail),
+        "predictive": _predictive_evidence(store),
+        "panel_coverage": _panel_coverage(store),
     }

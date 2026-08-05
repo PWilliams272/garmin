@@ -58,7 +58,7 @@
         Bayesian quantile regression; the latent level is a textbook local-level state space. What was
         actually assembled here is small — mainly a data-quality trick for classifying what Garmin's
         <code>weight</code> column means, and the particular way these standard parts are combined.
-        <a href="#provenance">Section 10</a> itemises every piece and its source.
+        <a href="#provenance">Section 11</a> itemises every piece and its source.
     </div>
 </section>
 
@@ -435,14 +435,95 @@
 </section>
 
 <!-- ══ 8. ROADMAP ══ -->
+<!-- ══ 9. PREDICTABILITY ══ -->
+<section id="predictive" class="paper-section">
+    <h2>9 · Is any of this actually predictable?</h2>
+    <p>
+        Before modelling how training affects recovery, it is worth asking whether the effect is
+        large enough to show up at all. This section is the reality check: if training history
+        carries no out-of-sample signal about tomorrow's HRV beyond what today's HRV already tells
+        you, then a more elaborate causal model is fitting noise with more machinery.
+    </p>
+
+    <h3>The daily panel</h3>
+    <p>
+        Everything here reads one table — one row per calendar day, wellness outcomes alongside
+        training load, rolling load windows and calendar controls. Building it once means
+        &ldquo;load on day <em>t</em>&rdquo; means the same thing to every model that uses it.
+    </p>
+    <p>
+        Two load measures are carried and deliberately never blended. <strong>Duration</strong>
+        exists for every session including manually-logged ones. <strong>HR load</strong> is
+        duration times average heart rate above resting — a volume&times;intensity measure in the
+        spirit of Banister's TRIMP, but simpler on purpose: TRIMP proper needs a maximum heart
+        rate, and estimating one from age would put a fabricated number in every row. They
+        disagree informatively, which is the point: an hour of bouldering and an hour of easy
+        running are the same duration and very different loads.
+    </p>
+    <div class="callout">
+        <strong>Null is not zero.</strong> A day with no session genuinely had zero training. A day
+        the watch was not worn has <em>unknown</em> HRV. Conflating those two is the easiest way to
+        corrupt everything built on top without it ever looking wrong, so load columns are filled
+        with zero and outcome columns are left null.
+    </div>
+    <div class="chart-host" id="coverage-chart"></div>
+    <div class="callout" id="coverage-callout"></div>
+
+    <h3>Measured against persistence, not against zero</h3>
+    <p>
+        The baseline is &ldquo;tomorrow looks like today&rdquo;. This matters more than any
+        modelling choice on the page: HRV has lag-1 autocorrelation around 0.56 here, so a model
+        that learns only <em>tomorrow resembles today</em> posts an impressive \(R^2\) while
+        containing no information about training whatsoever. Skill is therefore always reported
+        relative to persistence.
+    </p>
+    <p>
+        Splits are forward-chaining — every fold trains only on the past and tests on the future.
+        A random split would put a Tuesday in training and the Wednesday either side of it in
+        test, and the model would score far better than it ever could in practice.
+    </p>
+    <div class="chart-host" id="skill-chart"></div>
+    <div class="callout" id="skill-callout"></div>
+
+    <h3>Where that skill actually comes from</h3>
+    <p>
+        Beating persistence is a low bar that autocorrelation alone can clear, so on its own it
+        says nothing about training. Refitting with only the outcome's own recent history, then
+        adding the training columns, separates the two: any gain from the second is what training
+        genuinely contributes.
+    </p>
+    <div class="chart-host" id="ablation-chart"></div>
+    <div class="callout is-warn" id="ablation-callout"></div>
+    <div class="badge-row"><span class="badge badge-bespoke">Negative result</span>
+        <span class="note">This does not contradict the in-sample lag-2 partial correlation of
+        +0.14 in the section above. A real effect that small will not improve point prediction.
+        Both are true, and the second sets the ceiling on what the causal work can honestly
+        claim.</span></div>
+
+    <h3>Why this null is trustworthy</h3>
+    <p>
+        A null result is only worth reporting if the test could have detected a real effect. It
+        was checked against synthetic data with a known, strong two-day-lagged influence of load
+        on the outcome — and <strong>it failed the first time</strong>. The feature set had
+        same-day and rolling load but no explicitly <em>lagged</em> load, so a delayed effect was
+        invisible by construction: the ablation would have reported &ldquo;training adds
+        nothing&rdquo; no matter how large the true effect was.
+    </p>
+    <p>
+        Lags 1&ndash;5 of both load measures were added, the control now passes, and the null
+        above is unchanged. Without that check the result would have looked identical and meant
+        nothing.
+    </p>
+</section>
+
 <section id="roadmap" class="paper-section">
-    <h2>9 · Roadmap</h2>
+    <h2>10 · Roadmap</h2>
     <div class="roadmap" id="roadmap-list"></div>
 </section>
 
 <!-- ══ 9. PROVENANCE ══ -->
 <section id="provenance" class="paper-section">
-    <h2>10 · Provenance — what is borrowed, what is not</h2>
+    <h2>11 · Provenance — what is borrowed, what is not</h2>
     <p>
         Being explicit about this matters: most of the apparent sophistication here is standard method
         that other people developed and validated. The genuinely repo-specific pieces are few, and none
@@ -1051,6 +1132,96 @@ function renderConversionScatter(vc) {
         + `<strong>${nil.improvement_pct.toFixed(0)}%</strong> — the method does nothing where nothing is wrong.`;
 }
 
+/* ── 9. Predictability: coverage, skill vs persistence, and the ablation ── */
+const TARGET_LABELS = { hrv: 'HRV', resting_hr: 'Resting HR', sleep_score: 'Sleep score' };
+const labelTarget = (t) => TARGET_LABELS[t] || prettyVariant(t);
+
+function renderCoverage2(rows) {
+    if (!rows || !rows.length) return;
+    const host = document.getElementById('coverage-chart');
+    host.style.height = '300px';
+    const sorted = rows.slice().sort((a, b) => b.coverage - a.coverage);
+    Plotly.newPlot(host, [{
+        type: 'bar', x: sorted.map(r => prettyVariant(r.column)),
+        y: sorted.map(r => r.coverage * 100),
+        marker: { color: sorted.map(r => token(r.coverage > 0.9 ? '--lg-success' : '--lg-gold')) },
+        customdata: sorted.map(r => [r.n_days, r.total_days, r.first, r.last]),
+        hovertemplate: '%{x}<br>%{customdata[0]} of %{customdata[1]} days'
+            + '<br>%{customdata[2]} to %{customdata[3]}<extra></extra>',
+    }], baseLayout('Coverage (% of panel days)', {
+        height: 300, margin: { l: 56, r: 16, t: 8, b: 96 },
+        xaxis: { gridcolor: token('--lg-border'), zeroline: false, tickangle: -35, automargin: true },
+    }), PC);
+
+    const hrv = sorted.find(r => r.column === 'hrv');
+    const load = sorted.find(r => r.column === 'duration_min');
+    document.getElementById('coverage-callout').innerHTML =
+        `Training load is known for every day in the panel (${load ? load.n_days : '—'} of `
+        + `${load ? load.total_days : '—'}), because a day with no session really did have zero. `
+        + `Wellness is the binding constraint: HRV covers `
+        + `<strong>${hrv ? Math.round(hrv.coverage * 100) : '—'}%</strong> of the panel, starting `
+        + `${hrv ? hrv.first : '—'}. The decade of activity before that has nothing to predict.`;
+}
+
+function renderSkill(payload) {
+    const rows = (payload && payload.results) || [];
+    if (!rows.length) return;
+    const host = document.getElementById('skill-chart');
+    host.style.height = '320px';
+    const labels = rows.map(r => labelTarget(r.target));
+    Plotly.newPlot(host, [
+        { type: 'bar', name: 'Persistence (tomorrow = today)', x: labels,
+          y: rows.map(r => r.mae.persistence), marker: { color: token('--lg-muted-chart') },
+          hovertemplate: '%{x}<br>persistence MAE %{y:.2f}<extra></extra>' },
+        { type: 'bar', name: 'Ridge', x: labels, y: rows.map(r => r.mae.ridge),
+          marker: { color: token('--lg-gold') },
+          hovertemplate: '%{x}<br>ridge MAE %{y:.2f}<extra></extra>' },
+        { type: 'bar', name: 'Gradient boosting', x: labels, y: rows.map(r => r.mae.boosting),
+          marker: { color: token('--lg-highlight') },
+          hovertemplate: '%{x}<br>boosting MAE %{y:.2f}<extra></extra>' },
+    ], baseLayout('Mean absolute error (lower is better)', {
+        height: 320, barmode: 'group', showlegend: true,
+        legend: { orientation: 'h', y: -0.22 },
+        xaxis: { gridcolor: token('--lg-border'), zeroline: false, automargin: true },
+    }), PC);
+
+    const best = rows.map(r => `${labelTarget(r.target)} ${(r.skill_vs_persistence.ridge * 100).toFixed(0)}%`);
+    document.getElementById('skill-callout').innerHTML =
+        `Every outcome beats persistence out-of-sample — ${best.join(', ')} better by mean absolute `
+        + `error. Units differ per outcome, so compare each group of bars against its own grey `
+        + `baseline rather than across groups.`;
+}
+
+function renderAblation(payload) {
+    const rows = (payload && payload.ablations) || [];
+    if (!rows.length) return;
+    const host = document.getElementById('ablation-chart');
+    host.style.height = '320px';
+    const labels = rows.map(r => labelTarget(r.target));
+    Plotly.newPlot(host, [
+        { type: 'bar', name: "Outcome's own history only", x: labels,
+          y: rows.map(r => r.mae.own_history), marker: { color: token('--lg-gold') },
+          hovertemplate: '%{x}<br>own history MAE %{y:.2f}<extra></extra>' },
+        { type: 'bar', name: '+ training features', x: labels,
+          y: rows.map(r => r.mae.own_plus_training), marker: { color: token('--lg-danger') },
+          hovertemplate: '%{x}<br>with training MAE %{y:.2f}<extra></extra>' },
+    ], baseLayout('Mean absolute error (lower is better)', {
+        height: 320, barmode: 'group', showlegend: true,
+        legend: { orientation: 'h', y: -0.22 },
+        xaxis: { gridcolor: token('--lg-border'), zeroline: false, automargin: true },
+    }), PC);
+
+    // Always signed: "0.2%" reads as a small gain, "+0.2%" alongside "-6.0%"
+    // reads as the noise it is.
+    const signed = (v) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}%`;
+    const parts = rows.map(r => `${labelTarget(r.target)} ${signed(r.training_gain)}`);
+    document.getElementById('ablation-callout').innerHTML =
+        `<strong>Adding training history does not help.</strong> Gain from the training columns: `
+        + `${parts.join(', ')} — all at or below zero, and for HRV the extra features actively `
+        + `hurt by overfitting. So the skill in the chart above is the model smoothing each `
+        + `outcome's own recent history, not learning anything from what was trained.`;
+}
+
 /* ── 5. Knot spacing demo ── */
 function renderKnots() {
     const bias = REPORT.warmup_bias;
@@ -1410,6 +1581,9 @@ async function loadReport(source) {
         renderReps(d.rep_distribution);
         renderConversion(d.variant_conversion);
         renderConversionScatter(d.variant_conversion);
+        renderCoverage2(d.panel_coverage);
+        renderSkill(d.predictive);
+        renderAblation(d.predictive);
         renderKnots();
         renderRepVar(d.load_types || []);
         renderConvergence(d.convergence_history, d.strength_curves);
