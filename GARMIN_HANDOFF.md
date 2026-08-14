@@ -150,8 +150,8 @@ data, not of the code reading it — check here before chasing a weird result.
 | `health_stats.bmi` / `.body_fat` / `.fat_mass` | 43 days (2019-10-31 → 2020-03-06) held `0.0` instead of null | **Root cause fixed**; historical rows need the repair script below |
 | `sleep.skin_temp_f` / `.skin_temp_c` | null for all 3580 rows | Open — see below |
 | `health_stats.weight` | 33.9% missing since 2023, incl. a 194-day gap (2023-07-07 → 2024-01-16) | Not a bug — behavioural, see below |
-| `activities/summary/running.start_time` | null for 1061 of 1062 rows | **Root cause found**; needs the summary backfill below |
-| `activities/summary/strength.start_time` | null for 489 of 490 rows | Same cause |
+| `activities/summary/running.start_time` | was null for 1061 of 1062 rows | **Fixed 2026-08-14** — backfilled, 0 null |
+| `activities/summary/strength.start_time` | was null for 489 of 490 rows | **Fixed 2026-08-14** — backfilled, 0 null |
 
 ### The pattern behind most of these
 
@@ -186,6 +186,24 @@ python -m garmin.scripts.manual_backfill_activity_summaries \
 
 `--apply` needs Garmin credentials and re-pulls the full activity list, which is
 rate-limited — do one dataset at a time.
+
+**Run 2026-08-14 (backed up to `backups/2026-08-14-pre-start-time-backfill/`).**
+Both datasets are now fully populated: running 1062/1062, strength 490/490, row
+counts and unique `activity_id` counts unchanged, so the merge overwrote rather
+than duplicated. Auth came from the stored OAuth token via
+`GARMIN_USE_AWS_SECRETS=1 GARMIN_AWS_SECRET_NAME=garmin/oauth2_token`; no
+username/password needed.
+
+Values were checked rather than assumed: zero disagreements between
+`start_time`'s date and the `date` column, all 60 minute and 60 second values
+represented, no clustering at midnight or noon, and a stable median start hour
+(14–19) across every year from 2015. These are genuine recorded timestamps, not
+synthesized placeholders — which matters, because an old activity carrying a
+fabricated noon would silently corrupt any time-of-day analysis.
+
+A transient `botocore ConnectionClosedError` surfaced mid-run on the strength
+pass; boto retried and the write completed correctly. Verify integrity after any
+such error rather than assuming either outcome.
 
 **Weight coverage is behavioural, not a dropped-reading bug.** Tested by
 day-of-week: since 2025, Saturday 22.6% and Sunday 23.8% missing against
