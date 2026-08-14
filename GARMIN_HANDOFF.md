@@ -72,6 +72,52 @@ Note: `--provenance=false --sbom=false` are required on the image build -- Docke
 
 For legacy RDS inspection, use the existing machine-local `rds-tunnel` SSH alias rather than the AWS CLI.
 
+## Known data-quality issues
+
+Verified against live S3 on 2026-08-14. These are properties of the curated
+data, not of the code reading it — check here before chasing a weird result.
+
+| Field | Issue | Status |
+| --- | --- | --- |
+| `health_stats.bmi` / `.body_fat` / `.fat_mass` | 43 days (2019-10-31 → 2020-03-06) held `0.0` instead of null | **Root cause fixed**; historical rows need the repair script below |
+| `sleep.skin_temp_f` / `.skin_temp_c` | null for all 3580 rows | Open — see below |
+| `health_stats.weight` | 33.9% missing since 2023, incl. a 194-day gap (2023-07-07 → 2024-01-16) | Not a bug — behavioural |
+
+**Composition zeros.** Garmin returns `0` for body-composition fields when a
+scale reports only a weight. Zero is physiologically impossible for all of them,
+so `HealthPuller._post_process_weight` now nulls them before the daily groupby —
+before matters, since averaging a `0` with a real reading on the same day yields
+a plausible-looking wrong number. `fat_mass` is derived from `body_fat` and
+inherited the placeholder.
+
+The fix only affects newly-pulled days: `_update_daily_time_series_curated`
+resumes from the last stored date and never revisits history. Repair the
+existing rows with:
+
+```bash
+# dry run first -- reports counts, writes nothing
+python -m garmin.scripts.manual_repair_health_stats_zeros --storage-target s3
+python -m garmin.scripts.manual_repair_health_stats_zeros --storage-target s3 --apply
+```
+
+Lossless by construction, but it writes to production S3 — confirm before `--apply`.
+
+**Skin temperature.** Both the `_f` and `_c` variants are null across every row,
+while other fields mapped from the same `/sleep-service/stats/sleep/daily/`
+response (`sleep_need` 905, `body_battery_change` 978, `spo2` 1296) populate
+normally. So this is **not** a mapping typo or a unit-field mix-up — that
+endpoint does not carry skin temperature at all, and the `skinTempF`/`skinTempC`
+keys in the sleep mapping have never matched anything. Fixing it means finding
+the right endpoint, not renaming a key. The column is carried into
+`analyzed/panel/daily_panel.parquet` as a dead column; don't build on it.
+
+**Weight coverage.** Missing by year: 2023 71%, 2024 26%, 2025 14%, 2026 18%.
+Almost all of 2023 is one 194-day streak. Body composition begins 2024-04-12 for
+all six fields at once, consistent with a scale change. Treat weight as unusable
+as a covariate for 2023, and note the missingness is unlikely to be random —
+not weighing in correlates with the kind of period you would most want to
+measure.
+
 ## Guardrails
 
 - Keep credentials only in `~/.aws` or AWS secret stores — never in repo files.

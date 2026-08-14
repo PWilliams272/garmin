@@ -243,10 +243,38 @@ class HealthPuller:
         
         return df
 
+    #: Body-composition fields Garmin reports as 0 when the scale sent only a
+    #: weight. Zero is physiologically impossible for every one of these, so a
+    #: zero is unambiguously "not measured" rather than a reading.
+    _COMPOSITION_FIELDS = ('bmi', 'body_fat', 'body_water', 'bone_mass', 'muscle_mass')
+
     def _post_process_weight(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Convert weight units and derive fat mass, dropping placeholder zeros.
+
+        A weigh-in from a scale that measures only weight comes back with the
+        body-composition fields set to 0 rather than omitted. Left alone those
+        zeros survive into the curated parquet and read as real measurements --
+        a 0% body fat day averages into trends and silently drags them down.
+
+        Args:
+            df: Raw weight frame indexed by date, in grams.
+
+        Returns:
+            The frame in pounds, with composition zeros replaced by NaN and a
+            derived ``fat_mass`` column.
+        """
+        # Null the placeholders *before* the groupby: a day holding both a
+        # composition-less entry and a real one should average to the real
+        # reading, not to half of it.
+        for col in self._COMPOSITION_FIELDS:
+            if col in df.columns:
+                df[col] = df[col].replace(0, np.nan)
+
         df = df.groupby(df.index).mean().asfreq("D")
         for col in ['weight', 'muscle_mass', 'bone_mass']:
             df[col] = df[col] * 0.00220462
+        # NaN body_fat propagates, so fat_mass is null exactly when the
+        # composition it derives from is missing.
         df['fat_mass'] = df['body_fat'] * df['weight'] / 100.
         return df
 
