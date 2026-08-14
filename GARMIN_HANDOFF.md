@@ -149,7 +149,50 @@ data, not of the code reading it — check here before chasing a weird result.
 | --- | --- | --- |
 | `health_stats.bmi` / `.body_fat` / `.fat_mass` | 43 days (2019-10-31 → 2020-03-06) held `0.0` instead of null | **Root cause fixed**; historical rows need the repair script below |
 | `sleep.skin_temp_f` / `.skin_temp_c` | null for all 3580 rows | Open — see below |
-| `health_stats.weight` | 33.9% missing since 2023, incl. a 194-day gap (2023-07-07 → 2024-01-16) | Not a bug — behavioural |
+| `health_stats.weight` | 33.9% missing since 2023, incl. a 194-day gap (2023-07-07 → 2024-01-16) | Not a bug — behavioural, see below |
+| `activities/summary/running.start_time` | null for 1061 of 1062 rows | **Root cause found**; needs the summary backfill below |
+| `activities/summary/strength.start_time` | null for 489 of 490 rows | Same cause |
+
+### The pattern behind most of these
+
+**Three of the four known issues share one root cause: a puller improvement only
+ever reaches newly-pulled rows.** Both `_update_daily_time_series_curated` and
+`_update_activity_curated` resume from the last stored date, so when a column is
+added or a parsing bug fixed, every existing row keeps the old schema forever and
+nothing in the daily loop revisits it.
+
+When changing a puller's *output schema* — not just its behaviour — assume you
+also need a backfill, or the change silently applies to a thin sliver of recent
+data while the history it is meant to fix stays broken.
+
+**`start_time` on running/strength** is the clearest instance. It was added to
+`pull_running_summary` and `pull_strength_summary` in `937e27a` (2026-07-31); by
+then both datasets held years of history, so only activities recorded *after*
+that date have it — exactly one each. The sports handled by
+`pull_cardio_summary`, introduced the same day in `7025b0d` and therefore pulled
+fresh, are 100% populated. Same code, same field; the difference is entirely
+whether history predated the change.
+
+`merge_activity_summary` de-duplicates on `activity_id` keeping the last row, so
+re-pulling overwrites cleanly:
+
+```bash
+# report only -- needs no Garmin credentials, contacts nothing
+python -m garmin.scripts.manual_backfill_activity_summaries \
+    --storage-target s3 --report-only
+python -m garmin.scripts.manual_backfill_activity_summaries \
+    --storage-target s3 --dataset running --apply
+```
+
+`--apply` needs Garmin credentials and re-pulls the full activity list, which is
+rate-limited — do one dataset at a time.
+
+**Weight coverage is behavioural, not a dropped-reading bug.** Tested by
+day-of-week: since 2025, Saturday 22.6% and Sunday 23.8% missing against
+Wednesday 10.6% — roughly double at weekends. A puller silently dropping
+readings has no way to know what day of the week it is. Streaks back this up:
+34 single missing days, longest run 9 days. This is someone not standing on the
+scale, not a pipeline fault.
 
 **Composition zeros.** Garmin returns `0` for body-composition fields when a
 scale reports only a weight. Zero is physiologically impossible for all of them,
