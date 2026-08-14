@@ -111,6 +111,26 @@ manual run passed. Only the container was short. `tests/test_analyzer_import_sur
 now imports each analyzer entrypoint in a subprocess with the package hidden —
 verified to fail against the old import and pass against the new.
 
+**Resolved 2026-08-14 13:44 UTC-7.** Image rebuilt and deployed; the function ran
+clean — 312s, 270MB of 1024MB, no errors — and rewrote every analyzed artifact
+and all 7 viewer-cache files. Verified `analyzed/health_stats/body_fat_points`
+now has 0 zeros and a 17.7–21.5% range, so the curated repair flowed through.
+
+The deploy was **scoped to the fix only**: built from `deploy/analyzer-import-fix`
+(= the previously-live commit `47164be` plus the two fix commits), not from the
+feature branch, which is 9 commits further along and carries unreleased modelling
+changes. Two notes for whoever deploys next:
+
+- **`prod` is not the deploy source for this Lambda.** The `prod` branch sits at
+  `c133608 "Add ec2 deployment"`, which is not even an ancestor of the deployed
+  image's commit. Images are built from the working tree by the manual command
+  above. Don't assume `prod` reflects what is live — check the image tag.
+- **Init times out at 10s** (`INIT_REPORT ... Phase: init Status: timeout`) because
+  importing pandas/scipy/sklearn/statsmodels exceeds Lambda's init budget. Lambda
+  retries the init inside the invoke phase and the run then succeeds, so this is
+  survivable and pre-existing — but it is noise in the logs that looks like a
+  failure, and it makes every run pay the init cost twice.
+
 **Two gaps this leaves open** (neither addressed):
 
 - Nothing alerts on a failing scheduled Lambda. A two-week silent outage should
