@@ -48,7 +48,7 @@ import numpy as np
 import pandas as pd
 
 from garmin.io.curated_store import CuratedDataStore
-from garmin.updaters import ACTIVITY_DATASETS
+from garmin.datasets import ACTIVITY_DATASETS
 
 # Rolling windows for training load, in days.
 ACUTE_DAYS = 7

@@ -72,6 +72,54 @@ Note: `--provenance=false --sbom=false` are required on the image build -- Docke
 
 For legacy RDS inspection, use the existing machine-local `rds-tunnel` SSH alias rather than the AWS CLI.
 
+## Analyzer Lambda outage, 2026-07-31 → 2026-08-14
+
+**The analyzer Lambda failed on every scheduled run for two weeks**, and nothing
+alerted. Found 2026-08-14 while checking whether a curated-data repair had
+propagated downstream.
+
+```
+[ERROR] Runtime.ImportModuleError: Unable to import module
+        'garmin.scripts.lambda_analyze': No module named 'fitparse'
+```
+
+It failed at *import*, so it never ran a line of analysis. `curated/daily/` stayed
+current (that's the other Lambda) while everything the analyzer writes —
+`curated/analyzed/`, the viewer cache — froze at 2026-07-31. The viewer served
+two-week-old analysed data with no outward sign of a problem, because the fresh
+daily data underneath it kept updating.
+
+**Cause.** `fitparse` is in `pyproject.toml` but not in
+`src/garmin/requirements-analyzer.txt`, so the container never had it. The
+analyzer doesn't parse FIT files; the dependency arrived through this chain:
+
+```
+lambda_analyze:14 -> manual_build_viewer_cache:15 -> model_report:25
+                  -> updaters:12 -> pullers/activities:6 -> fitparse
+```
+
+`model_report.py` imported `ACTIVITY_DATASETS` — a list of twelve strings — from
+`updaters`, which pulls in the whole Garmin pulling stack.
+
+**Fix.** The constant moved to `garmin/datasets.py`, which imports nothing;
+`updaters` re-exports it for existing callers. Adding `fitparse` to the analyzer
+requirements would also have worked, but would have shipped a FIT parser to a job
+that never opens one.
+
+**Why no test caught it:** the local venv has `fitparse`, so every test and every
+manual run passed. Only the container was short. `tests/test_analyzer_import_surface.py`
+now imports each analyzer entrypoint in a subprocess with the package hidden —
+verified to fail against the old import and pass against the new.
+
+**Two gaps this leaves open** (neither addressed):
+
+- Nothing alerts on a failing scheduled Lambda. A two-week silent outage should
+  not depend on someone noticing a stale timestamp. `aws_monitor` is the natural
+  home.
+- `requirements-analyzer.txt` is maintained by hand and can drift from what the
+  code actually imports. The new test covers the analyzer's entrypoints, not the
+  general problem.
+
 ## Known data-quality issues
 
 Verified against live S3 on 2026-08-14. These are properties of the curated

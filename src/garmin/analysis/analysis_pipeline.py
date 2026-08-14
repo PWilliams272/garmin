@@ -1070,7 +1070,7 @@ def analyze_cardio_activities(curated_store: CuratedDataStore) -> None:
     """
     # Imported lazily (not at module top) to avoid a hard import-time
     # dependency from analysis -> updaters for a single small constant list.
-    from garmin.updaters import ACTIVITY_DATASETS
+    from garmin.datasets import ACTIVITY_DATASETS
 
     for dataset in ACTIVITY_DATASETS:
         if dataset in {"running", "strength"}:

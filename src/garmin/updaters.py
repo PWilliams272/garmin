@@ -18,14 +18,10 @@ from garmin.io.models import (
 
 
 # Every curated/activities/summary/<dataset>.parquet dataset name the
-# activity pipeline knows about -- kept as a plain module-level list (rather
-# than only living inside DataUpdater._activity_type_registry) so the web
-# app can enumerate real activity datasets without needing a Garmin session.
-ACTIVITY_DATASETS = [
-    "running", "strength", "cycling", "indoor_cycling", "hiking",
-    "lap_swimming", "open_water_swimming", "hiit", "bouldering",
-    "rock_climbing", "tennis", "pickleball",
-]
+# activity pipeline knows about. It now lives in garmin.datasets, which has no
+# imports: reaching it through this module dragged the Garmin pullers (and
+# fitparse) into the analyzer Lambda. Re-exported here for existing callers.
+from garmin.datasets import ACTIVITY_DATASETS  # noqa: E402
 
 
 def convert_nulls(df):

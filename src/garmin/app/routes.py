@@ -12,7 +12,7 @@ from garmin.analysis.analysis_pipeline import (
     load_type_for,
     variant_slug,
 )
-from garmin.updaters import ACTIVITY_DATASETS
+from garmin.datasets import ACTIVITY_DATASETS
 from garmin.prototypes.activity_explorer import (
     build_activity_explorer_html,
     blended_1rm,

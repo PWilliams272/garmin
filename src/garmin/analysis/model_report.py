@@ -22,7 +22,7 @@ from garmin.analysis.analysis_pipeline import (
     load_type_for,
 )
 from garmin.io.curated_store import CuratedDataStore
-from garmin.updaters import ACTIVITY_DATASETS
+from garmin.datasets import ACTIVITY_DATASETS
 
 # Quantile the envelope regression targets -- matches strength_curve's
 # default so the illustration reflects the real model's behaviour.
