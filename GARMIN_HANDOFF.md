@@ -166,6 +166,53 @@ worth knowing: across all 1126, `training_load` is non-null **exactly** when
 so `training_load IS NULL` is a clean flag for "manually entered". Before the
 2022-12-04 watch boundary it is null everywhere.
 
+**Daily metrics — pulled and backfilled 2026-08-15** via
+`garmin/pullers/training.py` and `manual_pull_training_metrics.py`:
+
+| dataset | rows | span | contents |
+| --- | --- | --- | --- |
+| `curated/daily/training_readiness.parquet` | 1347 | 2022-12-07 → | `readiness_score`, `acute_load`, `acwr_factor_pct`, `recovery_time_hr`, `hrv_weekly_avg`, per-factor percentages |
+| `curated/daily/training_status.parquet` | 1351 | 2022-12-04 → | `load_acute`, `load_chronic`, `acwr_percent`, `training_status_feedback`, monthly aerobic/anaerobic balance vs targets |
+| `curated/daily/vo2max.parquet` | 269 | 2022-12-04 → | `vo2max_generic` (223 days), `vo2max_cycling` (53) |
+| `curated/metadata/hr_zones.parquet` | 2 sports | — | `max_hr` **197**, lactate threshold, five zone floors |
+
+Readiness and status have **no range endpoint** — `/daily/{start}/{end}`,
+`/range/...` and `?startDate=` were all tried and only the single-date URL
+works, so a full backfill is ~1350 requests each. Both pullers skip dates
+already stored, so an interrupted run resumes instead of restarting.
+
+Two shape gotchas, both handled:
+
+- Readiness returns a row for days it never scored. Those are dropped rather
+  than stored as all-null rows that look measured.
+- VO2max keeps **two independent series**, `generic` (running/general) and
+  `cycling`, from different activity types. They are separate columns; averaging
+  them would report a number never measured. The older `vo2max` config in
+  `HealthPuller` reads only `generic` and would silently drop the 53 cycling
+  days — `TrainingPuller.pull_vo2max` supersedes it.
+
+### How our hr_load compares to Garmin's, measured
+
+Over 1266–1322 overlapping days from 2023-01-01:
+
+| ours | Garmin's | Pearson | Spearman |
+| --- | --- | --- | --- |
+| `hr_load_acute_7d` | `load_acute` | +0.62 | +0.71 |
+| `hr_load_chronic_28d` | `load_chronic` | +0.71 | +0.71 |
+| `hr_load_acwr` | `acwr_percent` | +0.60 | +0.62 |
+| `duration_min_acute_7d` | `load_acute` | +0.42 | +0.50 |
+
+Two things follow. The HR weighting earns its place — `hr_load` correlates far
+better with Garmin's load than raw duration does (0.62 vs 0.42). But 0.6–0.7 is
+**not** agreement: Garmin uses an EPOC model, ours is average HR above resting,
+and they are measurably different quantities. Prefer Garmin's `load_acute` as
+the primary now that it exists, and keep `hr_load` as the fallback for the
+hand-logged days Garmin cannot score.
+
+Beware `acwr_factor_pct` in the readiness table: it is a *readiness
+contribution*, not the ratio, and correlates **−0.52** with our ACWR. The
+comparable field is `acwr_percent` in `training_status`.
+
 **Still unpulled** (endpoints verified live, no puller yet):
 
 - `/biometric-service/heartRateZones` — `maxHeartRateUsed` **197**, lactate

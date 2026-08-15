@@ -26,6 +26,36 @@ class CuratedDataStore:
     def detailed_status_path(dataset: str) -> str:
         return f"curated/metadata/detailed_status/{dataset}.parquet"
 
+    @staticmethod
+    def hr_zones_path() -> str:
+        return "curated/metadata/hr_zones.parquet"
+
+    def load_hr_zones(self) -> pd.DataFrame:
+        """Configured HR zones and max HR, one row per sport.
+
+        Returns:
+            The stored zone table, or an empty frame if it has never been
+            pulled.
+
+        Note:
+            Lives under ``metadata/`` rather than ``daily/`` because it is
+            current configuration, not a time series -- there is no date column
+            and re-pulling replaces it wholesale.
+        """
+        return self._read_df_or_empty(self.hr_zones_path())
+
+    def write_hr_zones(self, df: pd.DataFrame) -> None:
+        """Replace the stored HR-zone table.
+
+        Args:
+            df: Zone table as returned by ``TrainingPuller.pull_hr_zones``.
+        """
+        if df.empty:
+            return
+        self.file_manager.write_df(
+            self._prepare_for_parquet(df), self.hr_zones_path(), format="parquet"
+        )
+
     def load_daily(self, dataset: str) -> pd.DataFrame:
         return self._read_df_or_empty(self.daily_dataset_path(dataset))
 
