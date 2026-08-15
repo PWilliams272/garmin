@@ -24,6 +24,32 @@ from garmin.io.models import (
 from garmin.datasets import ACTIVITY_DATASETS  # noqa: E402
 
 
+def _detail_specs(
+    dataset: str, detail_fn, detail_dataset: str | None, extra_details: list[dict] | None
+) -> list[tuple]:
+    """Flatten a registry entry's primary and extra details into one list.
+
+    Most sports have a single detail dataset, but strength has two -- per-set
+    reps/weight and a per-second HR trace -- so both the daily update and the
+    backfill iterate this rather than assuming one.
+
+    Args:
+        dataset: Summary dataset name, used as the detail name when none given.
+        detail_fn: Primary per-activity detail puller, or None.
+        detail_dataset: Where the primary puller's output is written.
+        extra_details: Further ``{"detail_fn", "detail_dataset"}`` mappings.
+
+    Returns:
+        ``(detail_fn, detail_dataset)`` pairs, primary first.
+    """
+    specs = []
+    if detail_fn is not None:
+        specs.append((detail_fn, detail_dataset or dataset))
+    for extra in extra_details or []:
+        specs.append((extra["detail_fn"], extra["detail_dataset"]))
+    return specs
+
+
 def convert_nulls(df):
     # Convert all NaT in datetime columns to None
     for col in df.columns:
@@ -434,6 +460,18 @@ class DataUpdater:
                 "dataset": "strength", "activity_type": "strength_training",
                 "summary_fn": self.activity_puller.pull_strength_summary,
                 "detail_fn": self.activity_puller.get_strength_workout,
+                # Strength is the one sport with two useful detail views: the
+                # per-set reps/weight above, and the per-second HR trace below.
+                # The watch records HR through a lift the same as any other
+                # activity, so this is the same puller every other sport uses --
+                # it just was never wired up here, leaving strength as the only
+                # HR-era sport with no timeseries.
+                "extra_details": [
+                    {
+                        "detail_fn": self.activity_puller.get_activity_detail_timeseries,
+                        "detail_dataset": "strength_timeseries",
+                    },
+                ],
             },
         ]
         bespoke_datasets = {e["dataset"] for e in entries}
@@ -454,7 +492,7 @@ class DataUpdater:
 
     def _update_activity_curated(
         self, dataset: str, summary_fn, detail_fn=None, detail_dataset: str | None = None,
-        start_date: str = "2015-01-01",
+        start_date: str = "2015-01-01", extra_details: list[dict] | None = None,
     ) -> None:
         existing = self.curated_store.load_activity_summary(dataset)
         if not existing.empty and "date" in existing.columns:
@@ -469,14 +507,14 @@ class DataUpdater:
 
         merged = self.curated_store.merge_activity_summary(dataset, summary_df)
 
-        if detail_fn is not None:
-            detail_dataset = detail_dataset or dataset
+        specs = _detail_specs(dataset, detail_fn, detail_dataset, extra_details)
+        for spec_fn, spec_dataset in specs:
             for activity_id in summary_df["activity_id"]:
-                detail_df = detail_fn(activity_id)
+                detail_df = spec_fn(activity_id)
                 if detail_df.empty:
                     continue
                 detail_df["activity_id"] = activity_id
-                self.curated_store.write_activity_detail(detail_dataset, activity_id, detail_df)
+                self.curated_store.write_activity_detail(spec_dataset, activity_id, detail_df)
 
         print(f"Saved {len(merged)} curated {dataset} activities ({len(summary_df)} new/updated).")
 
@@ -484,7 +522,7 @@ class DataUpdater:
         for entry in self._activity_type_registry():
             self._update_activity_curated(
                 entry["dataset"], entry["summary_fn"], entry.get("detail_fn"),
-                entry.get("detail_dataset"),
+                entry.get("detail_dataset"), extra_details=entry.get("extra_details"),
             )
 
     def backfill_activity_details(
@@ -548,18 +586,21 @@ class DataUpdater:
         for entry in self._activity_type_registry():
             if only_dataset is not None and entry["dataset"] != only_dataset:
                 continue
-            detail_fn = entry.get("detail_fn")
-            if detail_fn is None:
-                continue
-            result = self.backfill_activity_details(
-                entry["dataset"], detail_fn, entry.get("detail_dataset"), limit_per_dataset, force=force,
+            specs = _detail_specs(
+                entry["dataset"], entry.get("detail_fn"), entry.get("detail_dataset"),
+                entry.get("extra_details"),
             )
-            results.append(result)
-            print(
-                f"[{result['dataset']}] {result['fetched']} fetched, "
-                f"{result['already_had_detail']} already had detail, "
-                f"{result['empty']} empty of {result['total']} total."
-            )
+            for spec_fn, spec_dataset in specs:
+                result = self.backfill_activity_details(
+                    entry["dataset"], spec_fn, spec_dataset, limit_per_dataset, force=force,
+                )
+                result["detail_dataset"] = spec_dataset
+                results.append(result)
+                print(
+                    f"[{result['dataset']} -> {spec_dataset}] {result['fetched']} fetched, "
+                    f"{result['already_had_detail']} already had detail, "
+                    f"{result['empty']} empty of {result['total']} total."
+                )
         return results
 
     def _resolve_model_class(self, class_or_name: str | type) -> type:

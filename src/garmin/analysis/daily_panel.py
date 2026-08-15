@@ -47,8 +47,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from garmin.io.curated_store import CuratedDataStore
 from garmin.datasets import ACTIVITY_DATASETS
+from garmin.io.curated_store import CuratedDataStore
 
 # Rolling windows for training load, in days.
 ACUTE_DAYS = 7
@@ -138,10 +138,21 @@ def _daily_training(store: CuratedDataStore, resting_by_date: pd.Series) -> pd.D
     above_rest = (sessions["avg_hr"] - resting).clip(lower=0)
     sessions["hr_load"] = sessions["duration_min"] * above_rest
 
+    # A session with no recorded HR contributes NaN above, and the groupby sum
+    # below skips NaN -- so on its own that collapses to 0.0, making a manually
+    # logged session indistinguishable from a rest day. Both are real and they
+    # mean opposite things, so the unmeasured duration is carried alongside
+    # rather than left implicit. Consumers wanting to impute need to know how
+    # much training the hr_load figure is NOT accounting for.
+    sessions["missing_hr"] = sessions["avg_hr"].isna()
+    sessions["duration_missing_hr"] = sessions["duration_min"].where(sessions["missing_hr"], 0.0)
+
     totals = sessions.groupby("date", as_index=False).agg(
         duration_min=("duration_min", "sum"),
         hr_load=("hr_load", "sum"),
         sessions=("sport", "size"),
+        sessions_missing_hr=("missing_hr", "sum"),
+        duration_missing_hr=("duration_missing_hr", "sum"),
     )
 
     per_sport = (
@@ -186,17 +197,25 @@ def build_daily_panel(store: CuratedDataStore) -> pd.DataFrame:
     # reading has *unknown* HRV and must stay null -- filling it would invent
     # data, and every model downstream would silently believe it.
     load_columns = [c for c in panel.columns
-                    if c.startswith("duration") or c in ("hr_load", "sessions")]
+                    if c.startswith("duration")
+                    or c in ("hr_load", "sessions", "sessions_missing_hr")]
     panel[load_columns] = panel[load_columns].fillna(0.0)
 
     indexed = panel.set_index("date")
-    for column in ("duration_min", "hr_load"):
+    # duration_missing_hr is rolled alongside the loads so the acute/chronic
+    # figures can be read honestly: hr_load over a window is understated by
+    # exactly the training these minutes represent.
+    for column in ("duration_min", "hr_load", "duration_missing_hr"):
         if column not in indexed.columns:
             continue
         acute = indexed[column].rolling(f"{ACUTE_DAYS}D", min_periods=1).sum()
         chronic = indexed[column].rolling(f"{CHRONIC_DAYS}D", min_periods=1).sum()
         panel[f"{column}_acute_{ACUTE_DAYS}d"] = acute.to_numpy()
         panel[f"{column}_chronic_{CHRONIC_DAYS}d"] = chronic.to_numpy()
+        if column == "duration_missing_hr":
+            # This one is a coverage diagnostic, not a training load. An
+            # acute:chronic ratio of unmeasured minutes would mean nothing.
+            continue
         # Scale the chronic load to the acute window so the ratio is around 1
         # when training is steady, which is the convention these are read in.
         scaled = chronic * (ACUTE_DAYS / CHRONIC_DAYS)

@@ -85,6 +85,50 @@ def test_hr_load_is_zero_without_recorded_heart_rate():
     assert row["hr_load"] == 0.0
 
 
+def test_a_manual_session_is_distinguishable_from_a_rest_day():
+    """Both give hr_load == 0, and they mean opposite things. Peter logs a
+    session by hand when he forgot to record one -- usually climbing or
+    strength -- so downstream needs to impute those rather than believe the
+    zero. That is only possible if the panel says which days they were."""
+    panel = build_daily_panel(_store(n=10, runs=[
+        {"date": pd.Timestamp("2024-01-03"), "duration_min": 45.0, "avg_hr": np.nan},
+    ]))
+    manual = panel[panel["date"] == pd.Timestamp("2024-01-03")].iloc[0]
+    rest = panel[panel["date"] == pd.Timestamp("2024-01-04")].iloc[0]
+
+    assert manual["hr_load"] == rest["hr_load"] == 0.0  # indistinguishable here
+    assert manual["sessions_missing_hr"] == 1
+    assert manual["duration_missing_hr"] == 45.0
+    assert rest["sessions_missing_hr"] == 0
+    assert rest["duration_missing_hr"] == 0.0
+
+
+def test_partially_measured_day_keeps_the_measured_load():
+    """A recorded run plus a hand-logged climb on one day: the run's load is
+    real and must survive, while the climb's unmeasured minutes are reported
+    separately rather than dragging the day's load down or being dropped."""
+    panel = build_daily_panel(_store(n=10, runs=[
+        {"date": pd.Timestamp("2024-01-03"), "duration_min": 60.0, "avg_hr": 155.0},
+        {"date": pd.Timestamp("2024-01-03"), "duration_min": 90.0, "avg_hr": np.nan},
+    ]))
+    row = panel[panel["date"] == pd.Timestamp("2024-01-03")].iloc[0]
+    assert row["hr_load"] == pytest.approx(60.0 * (155.0 - 55.0))
+    assert row["duration_min"] == 150.0
+    assert row["duration_missing_hr"] == 90.0
+    assert row["sessions_missing_hr"] == 1
+
+
+def test_missing_hr_duration_rolls_up_but_gets_no_acwr():
+    """The rolled figure exists so a window's hr_load can be read honestly.
+    An acute:chronic ratio of *unmeasured* minutes would be meaningless, so
+    it is deliberately not produced."""
+    panel = build_daily_panel(_store(n=20, runs=[
+        {"date": d, "duration_min": 30.0, "avg_hr": np.nan} for d in _dates(20)
+    ]))
+    assert panel[f"duration_missing_hr_acute_{ACUTE_DAYS}d"].iloc[-1] == pytest.approx(210.0)
+    assert "duration_missing_hr_acwr" not in panel.columns
+
+
 def test_hr_load_counts_beats_above_rest():
     panel = build_daily_panel(_store(n=10, runs=[
         {"date": pd.Timestamp("2024-01-03"), "duration_min": 60.0, "avg_hr": 155.0},

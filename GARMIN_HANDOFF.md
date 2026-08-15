@@ -140,6 +140,49 @@ changes. Two notes for whoever deploys next:
   code actually imports. The new test covers the analyzer's entrypoints, not the
   general problem.
 
+## Garmin already computes strain, load and max HR — we don't pull any of it
+
+Probed live 2026-08-15. All of the following work against the current session and
+**none of it is in any puller today**. Before hand-rolling a training-load metric,
+note that Garmin ships a validated EPOC-based one.
+
+**Per activity** — already in the `/activitylist-service/.../activities` response
+the summary pullers already call, just not mapped:
+
+| field | example | note |
+| --- | --- | --- |
+| `activityTrainingLoad` | 38.4 | Garmin's EPOC-based load — the real TRIMP equivalent |
+| `aerobicTrainingEffect` / `anaerobicTrainingEffect` | 1.6 / 2.0 | 0–5 scale |
+| `hrTimeInZone_1..5` | 1203, 1122, 256, 0, 0 s | **makes Edwards zone-TRIMP free** — no zone maths needed |
+| `moderateIntensityMinutes` / `vigorousIntensityMinutes` | 38 / 14 | |
+| `maxHR` | 154 | per activity |
+
+Adding these is a mapping change in `pull_cardio_summary` / `pull_running_summary`
+/ `pull_strength_summary` plus a summary backfill — no new endpoint.
+
+**Max HR and zones** — `/biometric-service/heartRateZones`:
+`maxHeartRateUsed` **197**, `lactateThresholdHeartRateUsed` 171, zone floors
+100/116/136/160/177, and a separate set per sport. This is what Banister TRIMP
+needs, alongside the resting HR already in `heart_rate.parquet`. Garmin's 197 is
+observed, and notably higher than the age-predicted ~187 — so use this rather than
+a formula.
+
+**Daily readiness** — `/metrics-service/metrics/trainingreadiness/{date}` returns
+`acuteLoad`, `acwrFactorPercent`, `recoveryTime`, `hrvWeeklyAverage`, `score`,
+`sleepScore`, and per-factor feedback. **Garmin computes its own acute load and
+ACWR**, which `daily_panel` currently re-derives from duration and average HR.
+Worth comparing the two rather than assuming ours is better.
+
+**VO2max works and has history** — `/metrics-service/metrics/maxmet/daily/{start}/{end}`
+returns **266 records from 2023-01-05**, per sport (`cycling`, `generic`). This is
+the endpoint already sitting unverified in `health.py`; it is correct. Note a
+short recent window can return `[]` because VO2max only updates on qualifying
+activities, so don't conclude it's broken from one empty response.
+
+**Training status** — `/metrics-service/metrics/trainingstatus/aggregated/{date}`
+gives `mostRecentTrainingLoadBalance` (monthly aerobic-low / aerobic-high /
+anaerobic load against target ranges) and heat/altitude acclimation.
+
 ## Known data-quality issues
 
 Verified against live S3 on 2026-08-14. These are properties of the curated
@@ -152,6 +195,15 @@ data, not of the code reading it — check here before chasing a weird result.
 | `health_stats.weight` | 33.9% missing since 2023, incl. a 194-day gap (2023-07-07 → 2024-01-16) | Not a bug — behavioural, see below |
 | `activities/summary/running.start_time` | was null for 1061 of 1062 rows | **Fixed 2026-08-14** — backfilled, 0 null |
 | `activities/summary/strength.start_time` | was null for 489 of 490 rows | **Fixed 2026-08-14** — backfilled, 0 null |
+| `rock_climbing` / `pickleball` / `hiit` details | none exist | **Not fixable** — manually logged, see below |
+
+**Manually-logged sessions have no detail and never will.** All 7 HR-era
+`rock_climbing`, `pickleball` and `hiit` activities have `avg_hr` null and return
+an empty detail fetch: they are 4–6 hour climbing days entered by hand after
+forgetting to record. Not a backfill gap. Downstream should treat these as
+*sessions with missing HR* and impute, which is why `daily_panel` now emits
+`sessions_missing_hr` and `duration_missing_hr` (see below) — without those, a
+hand-logged session and a rest day are both `hr_load == 0` and indistinguishable.
 
 ### Per-second HR exists only from 2022-12-04 — this is a device boundary, not a gap
 
@@ -176,6 +228,37 @@ backfill can recover pre-December-2022 per-second HR — it was never recorded.*
 Practically this costs nothing: any model needing HRV or sleep score is confined
 to the same window anyway. Don't let a per-sport coverage table start a hunt for a
 pull bug that isn't there.
+
+### Power is not one signal — running power is estimated, cycling power is intermittent
+
+`power_w` in the detail timeseries has two completely different provenances, and
+nothing in the data distinguishes them. Treating them as one column will silently
+mix an estimate with a measurement.
+
+**Running power is always watch-estimated.** It appears on 225 of 1054 files, and
+its first appearance is **2022-12-04** — the same day as HR, i.e. the Fenix 7. So
+it is 100% of the HR era and 0% before, produced by the watch's own model rather
+than any sensor. There is no true running power in this dataset and never will be
+without a footpod.
+
+**Cycling power comes from a crank power meter and switches on and off:**
+
+| period | files with power |
+| --- | --- |
+| before 2023-01 | 0% (none at all) |
+| 2023-01 → 2023-11 | 100% |
+| 2024-03 → 2025-02 | **0%** |
+| 2025-03 onward | mostly present |
+
+Mean power is comparable across both on-periods (~160–215 W), so this is not an
+estimated-then-measured transition — it reads as the meter being present, then
+absent for about a year, then present again. Most likely a second bike without the
+meter, or a dead battery. **The date the meter was added is not recoverable from
+the curated data**; the gap structure is, and it is what matters for modelling.
+
+Practical guidance: do not build a feature that assumes a single "power meter
+added" cutover. Condition on `power_w` being present per activity, and never pool
+running power with cycling power.
 
 ### The pattern behind most of these
 

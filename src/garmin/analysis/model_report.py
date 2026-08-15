@@ -21,8 +21,8 @@ from garmin.analysis.analysis_pipeline import (
     _reviewed_strength_detail,
     load_type_for,
 )
-from garmin.io.curated_store import CuratedDataStore
 from garmin.datasets import ACTIVITY_DATASETS
+from garmin.io.curated_store import CuratedDataStore
 
 # Quantile the envelope regression targets -- matches strength_curve's
 # default so the illustration reflects the real model's behaviour.
@@ -341,7 +341,7 @@ def _wellness_lag_evidence(store: CuratedDataStore) -> dict | None:
         t = r * np.sqrt((n - 4) / max(1e-12, 1 - r ** 2))
         return {"r": round(r, 3), "t": round(float(t), 1)}
 
-    lags = [{"label": f"Load, same day" if lag == 0 else f"Load, {lag}d earlier", **partial(f"load_lag{lag}")}
+    lags = [{"label": "Load, same day" if lag == 0 else f"Load, {lag}d earlier", **partial(f"load_lag{lag}")}
             for lag in LOAD_LAGS]
     lags.append({"label": "Load, 7d mean", **partial("load_7d")})
 
