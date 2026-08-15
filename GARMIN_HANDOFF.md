@@ -153,6 +153,30 @@ data, not of the code reading it — check here before chasing a weird result.
 | `activities/summary/running.start_time` | was null for 1061 of 1062 rows | **Fixed 2026-08-14** — backfilled, 0 null |
 | `activities/summary/strength.start_time` | was null for 489 of 490 rows | **Fixed 2026-08-14** — backfilled, 0 null |
 
+### Per-second HR exists only from 2022-12-04 — this is a device boundary, not a gap
+
+`heart_rate_bpm` in `curated/activities/detail/*_timeseries/` looks alarmingly
+patchy per sport (cycling 7.5% of files, running 21.3%, bouldering 100%). **That
+is an artifact of each sport's age distribution, not a pull failure.** Full census
+of all 2898 local detail files, by year:
+
+| year | ≤2021 | 2022 | 2023 | 2024 | 2025 | 2026 |
+| --- | --- | --- | --- | --- | --- | --- |
+| files with HR | **0%** | 5.6% | **100%** | **100%** | **100%** | **100%** |
+
+The boundary is three days wide: last activity without HR is **2022-12-01**, first
+with HR is **2022-12-04**. That is the Fenix 7 coming online, and it matches the
+daily wellness datasets exactly — `hrv` starts 2022-12-04, `heart_rate`, `stress`,
+`body_battery` and `respiration` all start 2022-12-03.
+
+So bouldering is 100% because it only *starts* in 2023-01; cycling is 7.5% because
+973 of its 1050 files predate the watch. Cycling since 2023 is 77 of 77. **No
+backfill can recover pre-December-2022 per-second HR — it was never recorded.**
+
+Practically this costs nothing: any model needing HRV or sleep score is confined
+to the same window anyway. Don't let a per-sport coverage table start a hunt for a
+pull bug that isn't there.
+
 ### The pattern behind most of these
 
 **Three of the four known issues share one root cause: a puller improvement only
