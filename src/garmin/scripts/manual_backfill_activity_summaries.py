@@ -38,8 +38,10 @@ import pandas as pd  # noqa: E402
 from garmin.io.curated_store import CuratedDataStore  # noqa: E402
 from garmin.io.file_manager import FileManager  # noqa: E402
 
-#: Columns whose absence means the row predates a puller change worth backfilling.
-_SCHEMA_COLUMNS = ("start_time",)
+#: Columns whose absence means the row predates a puller change worth
+#: backfilling. `training_load` stands in for the whole Garmin effort block
+#: (training effect, zone times, intensity minutes) since they arrive together.
+_SCHEMA_COLUMNS = ("start_time", "training_load")
 
 
 def report_gaps(store: CuratedDataStore, datasets: list[str]) -> pd.DataFrame:

@@ -140,25 +140,51 @@ changes. Two notes for whoever deploys next:
   code actually imports. The new test covers the analyzer's entrypoints, not the
   general problem.
 
-## Garmin already computes strain, load and max HR — we don't pull any of it
+## Garmin's own strain and load metrics
 
-Probed live 2026-08-15. All of the following work against the current session and
-**none of it is in any puller today**. Before hand-rolling a training-load metric,
-note that Garmin ships a validated EPOC-based one.
+Garmin computes a validated EPOC-based training load on the watch. **Before
+hand-rolling a TRIMP, benchmark against it.**
 
-**Per activity** — already in the `/activitylist-service/.../activities` response
-the summary pullers already call, just not mapped:
+**Per activity — pulled and backfilled 2026-08-15.** These come from the
+`/activitylist-service/.../activities` response the summary pullers already
+called; they were simply never mapped. Now in every
+`curated/activities/summary/*.parquet`:
 
-| field | example | note |
+| column | example | note |
 | --- | --- | --- |
-| `activityTrainingLoad` | 38.4 | Garmin's EPOC-based load — the real TRIMP equivalent |
-| `aerobicTrainingEffect` / `anaerobicTrainingEffect` | 1.6 / 2.0 | 0–5 scale |
-| `hrTimeInZone_1..5` | 1203, 1122, 256, 0, 0 s | **makes Edwards zone-TRIMP free** — no zone maths needed |
-| `moderateIntensityMinutes` / `vigorousIntensityMinutes` | 38 / 14 | |
-| `maxHR` | 154 | per activity |
+| `training_load` | 38.4 | Garmin's EPOC-based load — the real TRIMP equivalent |
+| `aerobic_training_effect` / `anaerobic_training_effect` | 1.6 / 2.0 | 0–5 scale |
+| `training_effect_label` | `ANAEROBIC_CAPACITY` | |
+| `hr_zone_1_s` … `hr_zone_5_s` | 1203, 1122, 256, 0, 0 | seconds per zone — **makes Edwards zone-TRIMP free** |
+| `moderate_intensity_min` / `vigorous_intensity_min` | 38 / 14 | |
+| `max_hr` | 154 | newly added to `strength`, which never had it |
 
-Adding these is a mapping change in `pull_cardio_summary` / `pull_running_summary`
-/ `pull_strength_summary` plus a summary backfill — no new endpoint.
+**Coverage, verified after the backfill:** 1030 of 1126 HR-era activities (91.5%)
+carry `training_load`. The other 96 are the hand-logged sessions. The invariant
+worth knowing: across all 1126, `training_load` is non-null **exactly** when
+`avg_hr` is non-null — zero mismatches. Garmin cannot compute a load without HR,
+so `training_load IS NULL` is a clean flag for "manually entered". Before the
+2022-12-04 watch boundary it is null everywhere.
+
+**Still unpulled** (endpoints verified live, no puller yet):
+
+- `/biometric-service/heartRateZones` — `maxHeartRateUsed` **197**, lactate
+  threshold 171, zone floors 100/116/136/160/177, separate per sport. This is
+  Banister TRIMP's missing input; 197 is observed, against an age-predicted ~187.
+- `/metrics-service/metrics/trainingreadiness/{date}` — Garmin's **own**
+  `acuteLoad`, `acwrFactorPercent`, `recoveryTime`, `hrvWeeklyAverage`, `score`.
+  `daily_panel` re-derives acute load and ACWR from duration × avg HR; worth
+  comparing rather than assuming ours is better.
+- `/metrics-service/metrics/maxmet/daily/{start}/{end}` — VO2max, **266 records
+  from 2023-01-05**, per sport. The endpoint already in `health.py` is correct.
+  A short recent window can return `[]` because it only updates on qualifying
+  activities — don't conclude it's broken from one empty response.
+- `/metrics-service/metrics/trainingstatus/aggregated/{date}` — monthly aerobic-low
+  / aerobic-high / anaerobic load against target ranges, heat/altitude acclimation.
+
+`daily_panel` does not yet consume `training_load`; it still computes `hr_load`
+from duration × avg HR. Wiring Garmin's number in beside it is the obvious next
+step, and the point of pulling it was to make that comparison possible.
 
 **Max HR and zones** — `/biometric-service/heartRateZones`:
 `maxHeartRateUsed` **197**, `lactateThresholdHeartRateUsed` 171, zone floors

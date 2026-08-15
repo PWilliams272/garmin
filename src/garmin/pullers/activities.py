@@ -9,6 +9,43 @@ from tqdm.auto import tqdm
 
 METERS_PER_MILE = 1609.344
 METERS_PER_FOOT = 0.3048
+
+#: Number of Garmin heart-rate zones. Zone boundaries themselves come from
+#: /biometric-service/heartRateZones, not from the activity response.
+HR_ZONE_COUNT = 5
+
+
+def _training_load_fields(activity: dict) -> dict:
+    """Garmin's own effort metrics for one activity.
+
+    Garmin computes an EPOC-based training load and per-zone time on the watch
+    and returns them in the activity list response. Carrying them through means
+    a hand-rolled TRIMP can be benchmarked against a validated one rather than
+    trusted on faith, and ``hr_zone_*_s`` makes a zone-summed (Edwards) load
+    computable without reconstructing zone boundaries.
+
+    Every field is optional: older activities, manually-entered ones, and
+    sessions recorded before the current watch simply omit them, so each comes
+    back None rather than raising.
+
+    Args:
+        activity: One entry from the activity-list response.
+
+    Returns:
+        Column name to value, ready to merge into a summary row.
+    """
+    fields = {
+        "training_load": activity.get("activityTrainingLoad"),
+        "aerobic_training_effect": activity.get("aerobicTrainingEffect"),
+        "anaerobic_training_effect": activity.get("anaerobicTrainingEffect"),
+        "training_effect_label": activity.get("trainingEffectLabel"),
+        "moderate_intensity_min": activity.get("moderateIntensityMinutes"),
+        "vigorous_intensity_min": activity.get("vigorousIntensityMinutes"),
+    }
+    # Seconds spent in each HR zone, zone 1 (easiest) through 5.
+    for zone in range(1, HR_ZONE_COUNT + 1):
+        fields[f"hr_zone_{zone}_s"] = activity.get(f"hrTimeInZone_{zone}")
+    return fields
 GRAMS_PER_LB = 453.592
 SEMICIRCLE_TO_DEGREES = 180 / (2 ** 31)
 
@@ -79,6 +116,7 @@ class ActivityPuller:
                 "max_hr": a.get("maxHR"),
                 "elevation_gain_ft": round(elevation_gain_m / METERS_PER_FOOT, 1) if elevation_gain_m is not None else None,
                 "calories": a.get("calories"),
+                **_training_load_fields(a),
             })
         return pd.DataFrame(rows)
 
@@ -109,6 +147,7 @@ class ActivityPuller:
                 "max_hr": a.get("maxHR"),
                 "elevation_gain_ft": round(elevation_gain_m / METERS_PER_FOOT, 1) if elevation_gain_m is not None else None,
                 "calories": a.get("calories"),
+                **_training_load_fields(a),
             })
         return pd.DataFrame(rows)
 
@@ -126,6 +165,10 @@ class ActivityPuller:
                 "duration_min": round(duration_s / 60, 1) if duration_s is not None else None,
                 "calories": a.get("calories"),
                 "avg_hr": a.get("averageHR"),
+                # Strength summaries lacked max_hr entirely, unlike every other
+                # sport -- added here so the schema is consistent.
+                "max_hr": a.get("maxHR"),
+                **_training_load_fields(a),
             })
         return pd.DataFrame(rows)
 
