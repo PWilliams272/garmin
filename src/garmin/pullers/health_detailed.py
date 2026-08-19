@@ -7,6 +7,48 @@ from datetime import datetime
 from tqdm.auto import tqdm
 from typing import Callable
 
+
+#: Daily scalar summaries returned alongside the intraday arrays. The
+#: HealthDetailedPuller configs extract only the timeseries, so these have
+#: never been stored despite arriving in the same response -- the sleep-window respiration and SpO2
+#: figures in particular are exactly the overnight aggregates a sleep model
+#: wants, and are cheaper and less noisy than re-deriving them from the arrays.
+DAILY_SUMMARY_FIELDS = {
+    "heart_rate": {
+        "url_template": "wellness-service/wellness/dailyHeartRate?date={date}",
+        "mapping": {
+            "restingHeartRate": "resting_hr",
+            "maxHeartRate": "max_hr",
+            "minHeartRate": "min_hr",
+            "lastSevenDaysAvgRestingHeartRate": "resting_hr_7d_avg",
+        },
+    },
+    "respiration": {
+        "url_template": "wellness-service/wellness/daily/respiration/{date}",
+        "mapping": {
+            "avgSleepRespirationValue": "avg_sleep_respiration",
+            "avgWakingRespirationValue": "avg_waking_respiration",
+            "avgTomorrowSleepRespirationValue": "avg_tomorrow_sleep_respiration",
+            "highestRespirationValue": "highest_respiration",
+            "lowestRespirationValue": "lowest_respiration",
+            "sleepStartTimestampGMT": "sleep_start_gmt",
+            "sleepEndTimestampGMT": "sleep_end_gmt",
+        },
+    },
+    "spo2": {
+        "url_template": "wellness-service/wellness/daily/spo2acclimation/{date}",
+        "mapping": {
+            "averageSpO2": "avg_spo2",
+            "avgSleepSpO2": "avg_sleep_spo2",
+            "avgTomorrowSleepSpO2": "avg_tomorrow_sleep_spo2",
+            "lowestSpO2": "lowest_spo2",
+            "latestSpO2": "latest_spo2",
+            "lastSevenDaysAvgSpO2": "spo2_7d_avg",
+        },
+    },
+}
+
+
 class NoDataAvailable(Exception):
     """No historical data available for the given date."""
 
@@ -289,3 +331,45 @@ class HealthDetailedPuller:
         self._cache_warm_denied = False
         self._last_pull_status = {}
         return self._generic_range_pull(data_type, start_date, end_date, dates)
+
+    def pull_daily_summaries(self, metric: str, start_date: str, end_date: str,
+                             known_dates: set | None = None,
+                             show_progress: bool = True) -> pd.DataFrame:
+        """Daily scalar summaries from the wellness detail endpoints.
+
+        These endpoints are already called for their intraday arrays; this
+        reads the scalar fields in the same responses, which were previously
+        discarded. Strictly per-day, so a full backfill is one request per day
+        and is resumable.
+
+        Args:
+            metric: One of :data:`DAILY_SUMMARY_FIELDS`.
+            start_date: First date, ``YYYY-MM-DD``.
+            end_date: Last date, inclusive.
+            known_dates: ``datetime.date`` values to skip, so an interrupted
+                run resumes rather than restarting.
+            show_progress: Show a progress bar.
+
+        Returns:
+            One row per day that returned any of the mapped fields.
+        """
+        config = DAILY_SUMMARY_FIELDS[metric]
+        known_dates = known_dates or set()
+        days = [d for d in pd.date_range(start_date, end_date, freq="D")
+                if d.date() not in known_dates]
+        rows = []
+        for day in tqdm(days, desc=f"{metric} daily", unit="day", disable=not show_progress):
+            stamp = day.strftime("%Y-%m-%d")
+            try:
+                response = self.session.get(config["url_template"].format(date=stamp))
+            except Exception:
+                # One bad day must not abandon a thousand-day backfill.
+                continue
+            if not isinstance(response, dict):
+                continue
+            record = {out: response.get(src) for src, out in config["mapping"].items()}
+            if all(v is None for v in record.values()):
+                continue
+            record["date"] = day.date()
+            rows.append(record)
+        return pd.DataFrame(rows)

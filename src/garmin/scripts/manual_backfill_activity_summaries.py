@@ -39,9 +39,11 @@ from garmin.io.curated_store import CuratedDataStore  # noqa: E402
 from garmin.io.file_manager import FileManager  # noqa: E402
 
 #: Columns whose absence means the row predates a puller change worth
-#: backfilling. `training_load` stands in for the whole Garmin effort block
-#: (training effect, zone times, intensity minutes) since they arrive together.
-_SCHEMA_COLUMNS = ("start_time", "training_load")
+#: backfilling. Each stands in for a whole block of fields added at once:
+#: `training_load` for the Garmin effort block (training effect, zone times,
+#: intensity minutes), `moving_duration_s` for the session-context block
+#: (moving/elapsed time, manual flag, body-battery cost, device, climb splits).
+_SCHEMA_COLUMNS = ("start_time", "training_load", "moving_duration_s")
 
 
 def report_gaps(store: CuratedDataStore, datasets: list[str]) -> pd.DataFrame:

@@ -43,5 +43,10 @@ Full setup, env vars, and update/backfill commands: see `README.md`.
 
 - `README.md` — setup, env vars, auth model, local/Lambda commands.
 - `GARMIN_HANDOFF.md` — AWS resource names, CLI profiles, verified live state.
+- `GARMIN_FIELD_AUDIT.md` — what every Garmin endpoint offers vs what we keep, and the
+  **canonical source for each metric served by more than one endpoint**. Read the
+  duplicate-column table before using curated data in a model: several metrics exist under
+  multiple names (e.g. `sleep.avg_overnight_hrv` is byte-identical to `hrv.last_night_avg`),
+  and the three ACWR-named fields are three different quantities.
 - `GAME_PLAN.md` — current multi-goal roadmap (cleanup → activities data → Plotly migration → standalone deploy → predictive analysis).
 - `WEB_APP_SETUP.md` — deploy spec for the future `garmin.peterwilliams.dev` standalone app (not started yet).

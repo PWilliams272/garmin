@@ -18,6 +18,17 @@ class HealthPuller:
                     'bodyWater': 'body_water',
                     'boneMass': 'bone_mass',
                     'muscleMass': 'muscle_mass',
+                    # Provenance: distinguishes a scale reading from a manual
+                    # entry, which matters because the two have very different
+                    # error characteristics.
+                    'sourceType': 'source_type',
+                    'timestampGMT': 'timestamp_gmt',
+                    'weightDelta': 'weight_delta',
+                    # Null on this account's scale, mapped so that a future
+                    # scale populates them without another schema change.
+                    'visceralFat': 'visceral_fat',
+                    'metabolicAge': 'metabolic_age',
+                    'physiqueRating': 'physique_rating',
                 },
                 'response_path': ["dailyWeightSummaries"],
                 'values_field': "allWeightMetrics",
@@ -60,6 +71,11 @@ class HealthPuller:
                     'skinTempC': 'skin_temp_c',
                     'hrv7dAverage': 'hrv_7d_average',
                     'sleepScore': 'sleep_score',
+                    # Per-night HR and HRV. `resting_hr` above is the daily
+                    # resting figure; these two are measured over the sleep
+                    # window itself, which is what sleep modelling wants.
+                    'avgHeartRate': 'avg_sleep_heart_rate',
+                    'avgOvernightHrv': 'avg_overnight_hrv',
                 },
                 'response_path': ["individualStats"],
                 'date_field': "calendarDate",
@@ -83,6 +99,7 @@ class HealthPuller:
                 'mapping': {
                     "highStressDuration": "high_stress_duration",
                     "lowStressDuration": "low_stress_duration",
+                    "mediumStressDuration": "medium_stress_duration",
                     "overallStressLevel": "overall_stress_level",
                     "restStressDuration": "rest_stress_duration",
                 },
@@ -270,7 +287,15 @@ class HealthPuller:
             if col in df.columns:
                 df[col] = df[col].replace(0, np.nan)
 
-        df = df.groupby(df.index).mean().asfreq("D")
+        # `.mean()` silently drops non-numeric columns, which would delete
+        # source_type entirely. Average the measurements, and take the last
+        # value of the day for everything else.
+        numeric = df.select_dtypes(include=[np.number]).columns
+        other = [c for c in df.columns if c not in numeric]
+        aggregated = df.groupby(df.index)[list(numeric)].mean()
+        if other:
+            aggregated = aggregated.join(df.groupby(df.index)[other].last())
+        df = aggregated.asfreq("D")
         for col in ['weight', 'muscle_mass', 'bone_mass']:
             df[col] = df[col] * 0.00220462
         # NaN body_fat propagates, so fat_mass is null exactly when the

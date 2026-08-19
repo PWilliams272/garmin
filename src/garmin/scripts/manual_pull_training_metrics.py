@@ -53,6 +53,7 @@ def pull_training_metrics(
     metrics: tuple[str, ...] = _ALL_METRICS,
     start_date: str = DEFAULT_START,
     end_date: str | None = None,
+    refresh: bool = False,
 ) -> dict:
     """Pull the requested metrics and merge them into curated storage.
 
@@ -61,6 +62,9 @@ def pull_training_metrics(
         metrics: Any of ``zones``, ``vo2max``, ``readiness``, ``status``.
         start_date: First date for the dated metrics.
         end_date: Last date, defaulting to today.
+        refresh: Re-pull dates already stored. Needed after a mapping change --
+            the resume logic skips known dates, so new columns would otherwise
+            only ever reach days pulled after the change.
 
     Returns:
         Metric name to the number of rows now stored.
@@ -98,7 +102,7 @@ def pull_training_metrics(
     for metric, (dataset, pull_fn) in per_day.items():
         if metric not in metrics:
             continue
-        known = _known_dates(store, dataset)
+        known = set() if refresh else _known_dates(store, dataset)
         frame = pull_fn(start_date, end_date, known_dates=known)
         if frame.empty:
             print(f"{dataset}: no new days ({len(known)} already stored).")
@@ -120,6 +124,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--start-date", default=DEFAULT_START)
     parser.add_argument("--end-date", default=None)
+    parser.add_argument(
+        "--refresh", action="store_true",
+        help="Re-pull dates already stored, to backfill newly mapped columns.",
+    )
     return parser
 
 
@@ -130,6 +138,7 @@ def main(argv: list[str] | None = None):
         metrics=tuple(args.metric) if args.metric else _ALL_METRICS,
         start_date=args.start_date,
         end_date=args.end_date,
+        refresh=args.refresh,
     )
 
 

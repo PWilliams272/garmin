@@ -56,6 +56,174 @@ SEMICIRCLE_TO_DEGREES = 180 / (2 ** 31)
 FIT_CADENCE_DOUBLED_SPORTS = {"running"}
 
 
+def _session_context_fields(activity: dict) -> dict:
+    """Session context Garmin returns but that we historically discarded.
+
+    Three of these answer questions this repo has previously had to *infer*:
+
+    - ``is_manual`` flags a hand-logged session outright. Until now those were
+      identified indirectly, by their heart rate being null.
+    - ``moving_duration_s`` / ``elapsed_duration_s`` separate active from
+      wall-clock time. ``duration`` alone cannot distinguish a paused session
+      from a continuous one.
+    - ``device_id`` / ``manufacturer`` date the hardware. The 2022-12-04
+      per-second-HR boundary is currently inferred from where HR data starts.
+
+    Args:
+        activity: One entry from the activity-list response.
+
+    Returns:
+        Flat dict of extra columns, all ``None`` when absent.
+    """
+    fields = {
+        "moving_duration_s": activity.get("movingDuration"),
+        "elapsed_duration_s": activity.get("elapsedDuration"),
+        # Garmin sends both spellings; they have always agreed in this account,
+        # but prefer the explicit one and fall back rather than assume.
+        "is_manual": activity.get("isManualActivity", activity.get("manualActivity")),
+        "body_battery_change": activity.get("differenceBodyBattery"),
+        "water_estimated_ml": activity.get("waterEstimated"),
+        "bmr_calories": activity.get("bmrCalories"),
+        "steps": activity.get("steps"),
+        "lap_count": activity.get("lapCount"),
+        "device_id": activity.get("deviceId"),
+        "manufacturer": activity.get("manufacturer"),
+        "start_time_gmt": activity.get("startTimeGMT"),
+        "end_time_gmt": activity.get("endTimeGMT"),
+        "begin_timestamp_ms": activity.get("beginTimestamp"),
+        "time_zone_id": activity.get("timeZoneId"),
+        "aerobic_te_message": activity.get("aerobicTrainingEffectMessage"),
+        "anaerobic_te_message": activity.get("anaerobicTrainingEffectMessage"),
+        "is_personal_record": activity.get("isPR", activity.get("pr")),
+        "has_splits": activity.get("hasSplits"),
+        "has_polyline": activity.get("hasPolyline"),
+    }
+    fields.update(_split_summary_fields(activity))
+    return fields
+
+
+def _split_summary_fields(activity: dict) -> dict:
+    """Climb/split volume, where Garmin reports it.
+
+    ``splitSummaries`` is a list of per-split-type summaries. For bouldering it
+    carries the completed-climb count and the hardest grade, which exist in no
+    other field we pull -- a real volume metric for a sport that otherwise has
+    only duration and heart rate.
+    """
+    summaries = activity.get("splitSummaries")
+    if not isinstance(summaries, list) or not summaries:
+        return {"climbs_completed": None, "max_grade": None, "split_type": None}
+    # Prefer the active-climb summary; otherwise the one with the most splits.
+    chosen = next(
+        (s for s in summaries if s.get("splitType") == "CLIMB_ACTIVE"),
+        max(summaries, key=lambda s: s.get("noOfSplits") or 0),
+    )
+    grade = chosen.get("maxGradeValue") or {}
+    return {
+        "climbs_completed": chosen.get("numClimbsCompleted") or chosen.get("noOfSplits"),
+        "max_grade": grade.get("valueKey") if isinstance(grade, dict) else None,
+        "split_type": chosen.get("splitType"),
+    }
+
+
+#: Cycling power-meter dynamics. Present only on rides recorded with a
+#: dual-sided power meter, and null everywhere else -- parquet stores the
+#: all-null columns cheaply, and having them means a later analysis does not
+#: require re-pulling several thousand activities.
+_CYCLING_DYNAMICS = {
+    "left_right_balance": "directRightBalance",
+    "left_torque_effectiveness": "directLeftTorqueEffectiveness",
+    "right_torque_effectiveness": "directRightTorqueEffectiveness",
+    "left_pedal_smoothness": "directLeftPedalSmoothness",
+    "right_pedal_smoothness": "directRightPedalSmoothness",
+    "left_platform_center_offset": "directLeftPlatformCenterOffset",
+    "right_platform_center_offset": "directRightPlatformCenterOffset",
+    "left_power_phase_start": "directLeftPowerPhaseStart",
+    "left_power_phase_end": "directLeftPowerPhaseEnd",
+    "left_power_phase_peak_start": "directLeftPowerPhasePeakStart",
+    "left_power_phase_peak_end": "directLeftPowerPhasePeakEnd",
+    "right_power_phase_start": "directRightPowerPhaseStart",
+    "right_power_phase_end": "directRightPowerPhaseEnd",
+    "right_power_phase_peak_start": "directRightPowerPhasePeakStart",
+    "right_power_phase_peak_end": "directRightPowerPhasePeakEnd",
+}
+
+
+def _cycling_dynamics(getter) -> dict:
+    """Per-sample power-meter dynamics, via the caller's column accessor."""
+    return {out: getter(src) for out, src in _CYCLING_DYNAMICS.items()}
+
+
+#: FIT record fields carrying the same power-meter dynamics as
+#: `_CYCLING_DYNAMICS`, under FIT's own names. Verified 100% exact against the
+#: JSON endpoint on cycling activity 23026068497 (2026-08-18), except the two
+#: noted below. `left_pco`/`right_pco` are the platform-centre offsets, and the
+#: power-phase fields arrive as 2-element [start, end] arrays rather than
+#: separate columns.
+_FIT_DYNAMICS_DIRECT = {
+    "left_torque_effectiveness": "left_torque_effectiveness",
+    "right_torque_effectiveness": "right_torque_effectiveness",
+    "left_pedal_smoothness": "left_pedal_smoothness",
+    "right_pedal_smoothness": "right_pedal_smoothness",
+    "left_platform_center_offset": "left_pco",
+    "right_platform_center_offset": "right_pco",
+}
+
+#: (output column, FIT array field, element index).
+_FIT_DYNAMICS_ARRAYS = (
+    ("left_power_phase_start", "left_power_phase", 0),
+    ("left_power_phase_end", "left_power_phase", 1),
+    ("left_power_phase_peak_start", "left_power_phase_peak", 0),
+    ("left_power_phase_peak_end", "left_power_phase_peak", 1),
+    ("right_power_phase_start", "right_power_phase", 0),
+    ("right_power_phase_end", "right_power_phase", 1),
+    ("right_power_phase_peak_start", "right_power_phase_peak", 0),
+    ("right_power_phase_peak_end", "right_power_phase_peak", 1),
+)
+
+
+def _nan_column(length: int) -> pd.Series:
+    """An all-null float column, for fields the FIT file genuinely lacks."""
+    return pd.Series([None] * length, dtype="float64")
+
+
+def _fit_cycling_dynamics(raw: pd.DataFrame, getter) -> dict:
+    """Power-meter dynamics from FIT records, matching `_CYCLING_DYNAMICS`'s
+    output columns so the FIT and JSON paths stay schema-identical.
+
+    Two fields need decoding rather than a straight rename:
+
+    - `left_right_balance` carries a flag in its high bit, so the raw value
+      lands in 136-228 rather than 0-100. Masking with 0x7F reproduces the
+      JSON `directRightBalance` value exactly (100.0% of 195 samples);
+      unmasked it agrees on 0.0%, i.e. it is silently wrong, not merely
+      offset.
+    - the power-phase fields are 2-element [start, end] arrays.
+    """
+    out = {name: getter(src) for name, src in _FIT_DYNAMICS_DIRECT.items()}
+
+    balance = getter("left_right_balance")
+    # Nullable-safe: mask only where a value is present, so a missing sample
+    # stays missing instead of becoming a real-looking 0% balance.
+    masked = balance.fillna(0).astype("int64") & 0x7F
+    out["left_right_balance"] = balance.where(balance.isna(), masked)
+
+    for name, src, index in _FIT_DYNAMICS_ARRAYS:
+        if src in raw.columns:
+            out[name] = pd.to_numeric(
+                raw[src].apply(
+                    lambda v, i=index: v[i]
+                    if isinstance(v, (list, tuple)) and len(v) > i else None
+                ),
+                errors="coerce",
+            )
+        else:
+            out[name] = _nan_column(len(raw))
+    # Emit in _CYCLING_DYNAMICS order so the FIT and JSON frames are column-for-
+    # column identical, not merely the same set -- callers concat these.
+    return {name: out[name] for name in _CYCLING_DYNAMICS}
+
+
 class ActivityPuller:
     def __init__(self, session):
         self.session = session
@@ -117,6 +285,7 @@ class ActivityPuller:
                 "elevation_gain_ft": round(elevation_gain_m / METERS_PER_FOOT, 1) if elevation_gain_m is not None else None,
                 "calories": a.get("calories"),
                 **_training_load_fields(a),
+                **_session_context_fields(a),
             })
         return pd.DataFrame(rows)
 
@@ -148,6 +317,7 @@ class ActivityPuller:
                 "elevation_gain_ft": round(elevation_gain_m / METERS_PER_FOOT, 1) if elevation_gain_m is not None else None,
                 "calories": a.get("calories"),
                 **_training_load_fields(a),
+                **_session_context_fields(a),
             })
         return pd.DataFrame(rows)
 
@@ -169,6 +339,7 @@ class ActivityPuller:
                 # sport -- added here so the schema is consistent.
                 "max_hr": a.get("maxHR"),
                 **_training_load_fields(a),
+                **_session_context_fields(a),
             })
         return pd.DataFrame(rows)
 
@@ -413,6 +584,25 @@ class ActivityPuller:
             "vertical_oscillation": _get("directVerticalOscillation"),
             "vertical_ratio": _get("directVerticalRatio"),
             "stride_length": _get("directStrideLength"),
+            # Cumulative clocks. Garmin reports moving and elapsed time per
+            # sample, which is finer than the activity-level `movingDuration`
+            # and exists for sports where that summary field is 0 (bouldering).
+            "moving_duration_s": _get("sumMovingDuration"),
+            "elapsed_duration_s": _get("sumElapsedDuration"),
+            "duration_s": _get("sumDuration"),
+            # Intraday body battery: the within-session drain, rather than only
+            # the net change reported on the activity summary.
+            "body_battery": _get("directBodyBattery"),
+            # Garmin's own stamina model, cycling and running only.
+            "available_stamina": _get("directAvailableStamina"),
+            "potential_stamina": _get("directPotentialStamina"),
+            "performance_condition": _get("directPerformanceCondition"),
+            "vertical_speed": _get("directVerticalSpeed"),
+            "run_cadence": _get("directRunCadence"),
+            "fractional_cadence": _get("directFractionalCadence"),
+            "accumulated_power_w": _get("sumAccumulatedPower"),
+            "calories_burn_rate": _get("directCaloriesBurnRate"),
+            **_cycling_dynamics(_get),
         })
         return out
 
@@ -447,10 +637,19 @@ class ActivityPuller:
         FIT records against JSON points at matching timestamps decoded
         several of FIT's undocumented `unknown_NNN` fields as exact or
         near-exact matches for JSON's directBodyBattery (-> unknown_143),
-        directAvailableStamina/directPotentialStamina (-> unknown_137/138),
-        and directGradeAdjustedSpeed (-> unknown_140, scaled x1000). The
-        one JSON field that couldn't be confirmed either way is
-        directPerformanceCondition (was None in the sample checked).
+        directAvailableStamina/directPotentialStamina (-> unknown_138/137),
+        and directGradeAdjustedSpeed (-> unknown_140, scaled x1000).
+
+        Re-verified 2026-08-18 on running 23528115932 and cycling
+        23026068497, which corrected two things this docstring previously
+        got wrong. The stamina pair is **swapped** from what was recorded
+        here: available_stamina is unknown_138 and potential_stamina is
+        unknown_137, each 100.0% exact, where the reverse assignment agrees
+        on only 58-72% -- close enough to look right in a spot check, which
+        is presumably how it was mis-recorded. Garmin's own invariant
+        (potential >= available) holds for that assignment and fails for
+        the other. And directPerformanceCondition, described below as
+        unconfirmable, is unknown_90: 100.0% exact on both activities.
 
         Output columns match get_activity_timeseries's exactly (same
         names/units) so callers can treat the two interchangeably --
@@ -505,6 +704,26 @@ class ActivityPuller:
             "vertical_oscillation": _get("vertical_oscillation"),
             "vertical_ratio": _get("vertical_ratio"),
             "stride_length": _get("step_length"),
+            # Wall-clock elapsed. FIT has no counterpart to the JSON path's
+            # sumMovingDuration/sumDuration (the moving and timer clocks, which
+            # pause), so those stay null here rather than being faked from
+            # wall-clock time -- they would be wrong for any paused activity.
+            "moving_duration_s": _nan_column(len(raw)),
+            "elapsed_duration_s": (timestamps - timestamps.min()).dt.total_seconds(),
+            "duration_s": _nan_column(len(raw)),
+            "body_battery": _get("unknown_143"),
+            "available_stamina": _get("unknown_138"),
+            "potential_stamina": _get("unknown_137"),
+            "performance_condition": _get("unknown_90"),
+            # No FIT counterpart to directVerticalSpeed/directCaloriesBurnRate.
+            # directCaloriesBurnRate was all-null in the JSON path too.
+            "vertical_speed": _nan_column(len(raw)),
+            "run_cadence": _get("cadence") if sport in FIT_CADENCE_DOUBLED_SPORTS
+                           else _nan_column(len(raw)),
+            "fractional_cadence": _get("fractional_cadence"),
+            "accumulated_power_w": _get("accumulated_power"),
+            "calories_burn_rate": _nan_column(len(raw)),
+            **_fit_cycling_dynamics(raw, _get),
         })
         return out
 

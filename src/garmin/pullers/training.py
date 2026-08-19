@@ -36,6 +36,38 @@ _READINESS_FIELDS = {
     "hrvFactorPercent": "hrv_factor_pct",
     "recoveryTimeFactorPercent": "recovery_time_factor_pct",
     "feedbackShort": "readiness_feedback",
+    "feedbackLong": "readiness_feedback_long",
+    # Whether the score had a real sleep input. A readiness score computed
+    # without valid sleep is not comparable to one that had it, and nothing
+    # else in the response says so.
+    "validSleep": "valid_sleep",
+    "inputContext": "input_context",
+    "timestampLocal": "timestamp_local",
+    "acwrFactorFeedback": "acwr_factor_feedback",
+    "hrvFactorFeedback": "hrv_factor_feedback",
+    "sleepScoreFactorFeedback": "sleep_score_factor_feedback",
+    "sleepHistoryFactorFeedback": "sleep_history_factor_feedback",
+    "stressHistoryFactorFeedback": "stress_history_factor_feedback",
+    "recoveryTimeFactorFeedback": "recovery_time_factor_feedback",
+    "recoveryTimeChangePhrase": "recovery_time_change_phrase",
+}
+
+#: Heat and altitude acclimation, reported inside the training-status response.
+#: ``currentAltitude`` is the only altitude signal this repo has anywhere -- it
+#: is what distinguishes a night spent camping at elevation from one at home.
+_ACCLIMATION_FIELDS = {
+    "currentAltitude": "current_altitude_m",
+    "previousAltitude": "previous_altitude_m",
+    "altitudeAcclimation": "altitude_acclimation",
+    "previousAltitudeAcclimation": "previous_altitude_acclimation",
+    "altitudeAcclimationDate": "altitude_acclimation_date",
+    "altitudeTrend": "altitude_trend",
+    "heatAcclimationPercentage": "heat_acclimation_pct",
+    "previousHeatAcclimationPercentage": "previous_heat_acclimation_pct",
+    "heatAcclimationDate": "heat_acclimation_date",
+    "heatTrend": "heat_trend",
+    "acclimationPercentage": "acclimation_pct",
+    "previousAcclimationPercentage": "previous_acclimation_pct",
 }
 
 #: Fields from the monthly load balance inside the training-status response.
@@ -88,7 +120,7 @@ class TrainingPuller:
 
     def _pull_per_day(
         self, name: str, url_template: str, extract, start_date: str, end_date: str,
-        known_dates: set | None = None,
+        known_dates: set | None = None, show_progress: bool = True,
     ) -> pd.DataFrame:
         """Walk a date range one request per day, skipping dates already held.
 
@@ -100,6 +132,8 @@ class TrainingPuller:
             end_date: Last date, inclusive.
             known_dates: ``datetime.date`` values to skip, making a partial run
                 resumable rather than restarting the whole range.
+            show_progress: Show a progress bar. Off for the nightly run, where
+                tqdm writes thousands of useless lines into the Lambda log.
 
         Returns:
             One row per day that returned data, with a ``date`` column.
@@ -108,7 +142,7 @@ class TrainingPuller:
         dates = pd.date_range(start_date, end_date, freq="D")
         pending = [d for d in dates if d.date() not in known_dates]
         rows = []
-        for day in tqdm(pending, desc=name, unit="day"):
+        for day in tqdm(pending, desc=name, unit="day", disable=not show_progress):
             stamp = day.strftime("%Y-%m-%d")
             try:
                 response = self.session.get(url_template.format(date=stamp))
@@ -165,11 +199,29 @@ class TrainingPuller:
             record["acwr_status"] = load.get("acwrStatus")
             record["load_chronic_target_min"] = load.get("minTrainingLoadChronic")
             record["load_chronic_target_max"] = load.get("maxTrainingLoadChronic")
+            # The raw ratio, alongside the percent form already stored. Note
+            # these are different scales, not a unit conversion of each other.
+            record["acwr_ratio"] = load.get("dailyAcuteChronicWorkloadRatio")
+            record["acwr_status_feedback"] = load.get("acwrStatusFeedback")
+            record["fitness_trend_sport"] = latest.get("fitnessTrendSport")
+            record["load_tunnel_min"] = latest.get("loadTunnelMin")
+            record["load_tunnel_max"] = latest.get("loadTunnelMax")
+            record["status_since_date"] = latest.get("sinceDate")
+
+        vo2 = (response.get("mostRecentVO2Max") or {})
+        acclimation = vo2.get("heatAltitudeAcclimation") or {}
+        for source, out in _ACCLIMATION_FIELDS.items():
+            record[out] = acclimation.get(source)
+
+        devices = (status.get("recordedDevices") or [])
+        if devices:
+            record["device_name"] = devices[0].get("deviceName")
 
         return record or None
 
     def pull_training_readiness(
-        self, start_date: str, end_date: str, known_dates: set | None = None
+        self, start_date: str, end_date: str, known_dates: set | None = None,
+        show_progress: bool = True,
     ) -> pd.DataFrame:
         """Daily training readiness, including Garmin's own acute load and ACWR.
 
@@ -177,6 +229,7 @@ class TrainingPuller:
             start_date: First date, ``YYYY-MM-DD``.
             end_date: Last date, inclusive.
             known_dates: Dates already stored, skipped so a run is resumable.
+            show_progress: Show a progress bar. Off for the nightly run.
 
         Returns:
             One row per scored day.
@@ -185,7 +238,7 @@ class TrainingPuller:
             "training_readiness",
             "/metrics-service/metrics/trainingreadiness/{date}",
             self._extract_readiness,
-            start_date, end_date, known_dates,
+            start_date, end_date, known_dates, show_progress=show_progress,
         )
 
     def pull_vo2max(self, start_date: str, end_date: str) -> pd.DataFrame:
@@ -228,7 +281,8 @@ class TrainingPuller:
         return pd.DataFrame(sorted(by_date.values(), key=lambda r: r["date"]))
 
     def pull_training_status(
-        self, start_date: str, end_date: str, known_dates: set | None = None
+        self, start_date: str, end_date: str, known_dates: set | None = None,
+        show_progress: bool = True,
     ) -> pd.DataFrame:
         """Daily training status and monthly aerobic/anaerobic load balance.
 
@@ -236,6 +290,7 @@ class TrainingPuller:
             start_date: First date, ``YYYY-MM-DD``.
             end_date: Last date, inclusive.
             known_dates: Dates already stored, skipped so a run is resumable.
+            show_progress: Show a progress bar. Off for the nightly run.
 
         Returns:
             One row per day that returned a status.
@@ -244,5 +299,5 @@ class TrainingPuller:
             "training_status",
             "/metrics-service/metrics/trainingstatus/aggregated/{date}",
             self._extract_status,
-            start_date, end_date, known_dates,
+            start_date, end_date, known_dates, show_progress=show_progress,
         )
