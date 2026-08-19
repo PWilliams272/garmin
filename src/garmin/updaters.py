@@ -11,6 +11,7 @@ from garmin.pullers.health import HealthPuller
 from garmin.pullers.health_detailed import HealthDetailedPuller
 from garmin.pullers.activities import ActivityPuller
 from garmin.pullers.training import TrainingPuller
+from garmin.pullers.user_metrics import UserMetricsPuller
 from sqlalchemy.dialects.postgresql import insert
 from garmin.io.models import (
     HealthStats, Steps, Sleep, Stress, BodyBattery, HeartRate, HRV, Respiration,
@@ -22,7 +23,7 @@ from garmin.io.models import (
 # activity pipeline knows about. It now lives in garmin.datasets, which has no
 # imports: reaching it through this module dragged the Garmin pullers (and
 # fitparse) into the analyzer Lambda. Re-exported here for existing callers.
-from garmin.datasets import ACTIVITY_DATASETS  # noqa: E402
+from garmin.datasets import ACTIVITY_DATASETS, activity_type_key  # noqa: E402
 
 
 #: Garmin's own per-day training metrics: curated dataset -> the TrainingPuller
@@ -49,6 +50,21 @@ WELLNESS_DAILY_DATASETS = {
 #: backfill and time out. Filling a gap older than this window is the job of
 #: manual_pull_training_metrics.py / manual_pull_wellness_daily.py.
 NIGHTLY_LOOKBACK_DAYS = 10
+
+#: Per-day endpoints found in the 2026-08-19 endpoint sweep that nothing had
+#: ever called. Curated dataset -> UserMetricsPuller method.
+USER_METRIC_PULLERS = {
+    "fitness_age": "pull_fitness_age",
+    "daily_summary": "pull_daily_summary",
+    "hydration": "pull_hydration",
+    "intensity_minutes": "pull_intensity_minutes",
+}
+
+#: Undated snapshots from the same sweep: current state, rewritten whole.
+USER_METRIC_SNAPSHOTS = {
+    "personal_records": "pull_personal_records",
+    "devices": "pull_devices",
+}
 
 
 def _detail_specs(
@@ -97,6 +113,7 @@ class DataUpdater:
         health_detailed_puller=None,
         activity_puller=None,
         training_puller=None,
+        user_metrics_puller=None,
     ):
         self.curated_store = curated_store
         if self.curated_store is not None:
@@ -107,6 +124,7 @@ class DataUpdater:
         self.health_detailed_puller = health_detailed_puller or HealthDetailedPuller(session)
         self.activity_puller = activity_puller or ActivityPuller(session)
         self.training_puller = training_puller or TrainingPuller(session)
+        self.user_metrics_puller = user_metrics_puller or UserMetricsPuller(session)
         
         self.pull_fn_map = {
             HealthStats: lambda **kwargs: self.health_puller.pull_data('weight', **kwargs),
@@ -472,10 +490,11 @@ class DataUpdater:
         shape). `detail_fn(activity_id)`, if given, is called once per activity
         in the new/updated summary and written via write_activity_detail.
 
-        typeKeys beyond "running"/"strength_training" haven't been confirmed
-        against a live Garmin response yet -- verify/adjust these against a
-        real pull_activity_list() result if a sport's data doesn't come back
-        as expected.
+Every typeKey here was verified on 2026-08-19 against a full
+        pull_activity_list() over the whole history (3838 activities). The
+        dataset name is *not* always the typeKey -- see
+        garmin.datasets.activity_type_key, which exists because deriving one
+        from the other left the tennis dataset silently empty for years.
         """
         cardio = self.activity_puller.pull_cardio_summary
         entries = [
@@ -507,9 +526,10 @@ class DataUpdater:
         for dataset in ACTIVITY_DATASETS:
             if dataset in bespoke_datasets:
                 continue
+            type_key = activity_type_key(dataset)
             entries.append({
-                "dataset": dataset, "activity_type": dataset,
-                "summary_fn": lambda s, e, t=dataset: cardio(t, s, e),
+                "dataset": dataset, "activity_type": type_key,
+                "summary_fn": lambda s, e, t=type_key: cardio(t, s, e),
                 # Every non-strength sport goes through the same FIT-first/
                 # JSON-fallback per-point puller as running (see
                 # get_activity_detail_timeseries) -- it degrades gracefully
@@ -730,6 +750,32 @@ class DataUpdater:
             )
             self._merge_nightly_daily(dataset, frame)
 
+    def _update_user_metrics_curated(self) -> None:
+        """Refresh the endpoints found in the 2026-08-19 sweep.
+
+        Race predictions come from a range endpoint, so they are one request
+        rather than one per day. Everything else follows the same bounded
+        nightly window as the other supplementary datasets.
+        """
+        start, end, known = self._nightly_window("race_predictions")
+        self._merge_nightly_daily(
+            "race_predictions",
+            self.user_metrics_puller.pull_race_predictions(start, end),
+        )
+
+        for dataset, method_name in USER_METRIC_PULLERS.items():
+            start, end, known = self._nightly_window(dataset)
+            frame = getattr(self.user_metrics_puller, method_name)(
+                start, end, known_dates=known, show_progress=False,
+            )
+            self._merge_nightly_daily(dataset, frame)
+
+        for name, method_name in USER_METRIC_SNAPSHOTS.items():
+            frame = getattr(self.user_metrics_puller, method_name)()
+            if not frame.empty:
+                self.curated_store.write_metadata(name, frame)
+                print(f"{name}: {len(frame)} rows.")
+
     def _update_supplementary_curated(self) -> list[str]:
         """Refresh the additive curated datasets that hang off endpoints the
         nightly run already touches.
@@ -747,6 +793,7 @@ class DataUpdater:
         for label, step in (
             ("training metrics", self._update_training_metrics_curated),
             ("wellness daily summaries", self._update_wellness_daily_curated),
+            ("user metrics", self._update_user_metrics_curated),
         ):
             try:
                 step()

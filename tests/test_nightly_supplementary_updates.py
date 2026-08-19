@@ -35,6 +35,7 @@ class _StubStore:
         self.existing = existing or {}
         self.merged: dict[str, pd.DataFrame] = {}
         self.hr_zones = None
+        self.snapshots: dict[str, pd.DataFrame] = {}
 
     def load_daily(self, dataset):
         return self.existing.get(dataset, pd.DataFrame())
@@ -45,6 +46,9 @@ class _StubStore:
 
     def write_hr_zones(self, df):
         self.hr_zones = df
+
+    def write_metadata(self, name, df):
+        self.snapshots[name] = df
 
 
 class _StubTrainingPuller:
@@ -87,7 +91,42 @@ class _StubDetailedPuller:
         return self.frame
 
 
-def _updater(store, training=None, detailed=None):
+class _StubUserMetricsPuller:
+    def __init__(self, frame=None, fail=False):
+        self.frame = frame if frame is not None else pd.DataFrame()
+        self.fail = fail
+        self.calls = []
+
+    def _record(self, name, start=None, end=None, known_dates=None, show_progress=True):
+        if self.fail:
+            raise RuntimeError("garmin timed out")
+        self.calls.append({"name": name, "start": start, "end": end,
+                           "known": known_dates or set(), "progress": show_progress})
+        return self.frame
+
+    def pull_race_predictions(self, start, end):
+        return self._record("race_predictions", start, end)
+
+    def pull_fitness_age(self, start, end, known_dates=None, show_progress=True):
+        return self._record("fitness_age", start, end, known_dates, show_progress)
+
+    def pull_daily_summary(self, start, end, known_dates=None, show_progress=True):
+        return self._record("daily_summary", start, end, known_dates, show_progress)
+
+    def pull_hydration(self, start, end, known_dates=None, show_progress=True):
+        return self._record("hydration", start, end, known_dates, show_progress)
+
+    def pull_intensity_minutes(self, start, end, known_dates=None, show_progress=True):
+        return self._record("intensity_minutes", start, end, known_dates, show_progress)
+
+    def pull_personal_records(self):
+        return self._record("personal_records")
+
+    def pull_devices(self):
+        return self._record("devices")
+
+
+def _updater(store, training=None, detailed=None, user_metrics=None):
     return DataUpdater(
         session=object(),
         curated_store=store,
@@ -95,6 +134,7 @@ def _updater(store, training=None, detailed=None):
         health_detailed_puller=detailed or _StubDetailedPuller(),
         activity_puller=object(),
         training_puller=training or _StubTrainingPuller(),
+        user_metrics_puller=user_metrics or _StubUserMetricsPuller(),
     )
 
 
@@ -183,16 +223,17 @@ def test_a_failing_training_pull_does_not_stop_the_wellness_pull():
     failures = updater._update_supplementary_curated()
 
     assert len(failures) == 1 and "training metrics" in failures[0]
-    assert set(store.merged) == set(WELLNESS_DAILY_DATASETS.values())
+    assert set(WELLNESS_DAILY_DATASETS.values()) <= set(store.merged)
 
 
-def test_both_failing_is_reported_and_still_does_not_raise():
+def test_every_step_failing_is_reported_and_still_does_not_raise():
     updater = _updater(
         _StubStore(),
         training=_StubTrainingPuller(fail=True),
         detailed=_StubDetailedPuller(fail=True),
+        user_metrics=_StubUserMetricsPuller(fail=True),
     )
-    assert len(updater._update_supplementary_curated()) == 2
+    assert len(updater._update_supplementary_curated()) == 3
 
 
 def test_a_clean_run_reports_no_failures():
@@ -200,8 +241,32 @@ def test_a_clean_run_reports_no_failures():
         _StubStore(),
         training=_StubTrainingPuller(_day_frame("2026-08-18")),
         detailed=_StubDetailedPuller(_day_frame("2026-08-18")),
+        user_metrics=_StubUserMetricsPuller(_day_frame("2026-08-18")),
     )
     assert updater._update_supplementary_curated() == []
+
+
+def test_user_metric_datasets_and_snapshots_are_all_refreshed():
+    from garmin.updaters import USER_METRIC_PULLERS, USER_METRIC_SNAPSHOTS
+    store = _StubStore()
+    um = _StubUserMetricsPuller(_day_frame("2026-08-18"))
+    _updater(store, user_metrics=um)._update_user_metrics_curated()
+
+    assert set(store.merged) == {"race_predictions", *USER_METRIC_PULLERS}
+    assert set(store.snapshots) == set(USER_METRIC_SNAPSHOTS)
+
+
+def test_a_failing_user_metric_pull_does_not_stop_the_others():
+    store = _StubStore()
+    updater = _updater(
+        store,
+        training=_StubTrainingPuller(_day_frame("2026-08-18")),
+        detailed=_StubDetailedPuller(_day_frame("2026-08-18")),
+        user_metrics=_StubUserMetricsPuller(fail=True),
+    )
+    failures = updater._update_supplementary_curated()
+    assert len(failures) == 1 and "user metrics" in failures[0]
+    assert "training_readiness" in store.merged
 
 
 def test_update_all_actually_invokes_the_supplementary_step():

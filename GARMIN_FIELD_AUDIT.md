@@ -429,3 +429,99 @@ Null on FIT-sourced activities, which is nearly all of them:
 
 `elapsed_duration_s` **is** populated on the FIT path, derived from record timestamps
 and verified 100.0% exact against the JSON values.
+
+---
+
+## Endpoints that were never being called (2026-08-19)
+
+The sections above audit *fields within endpoints already called*. This one
+covers the other half: whole endpoints Garmin serves that nothing here had ever
+requested. Probed live; endpoints that errored or returned nothing for this
+account (endurance score, hill score, gear, courses, goals, lactate threshold)
+are recorded here as checked-and-absent so they are not re-probed.
+
+| Dataset | Endpoint shape | What it adds |
+|---|---|---|
+| `race_predictions` | range, **365-day cap** | Predicted 5K/10K/half/marathon times, one row per day. **1354 days back to 2022-11-05.** Computed daily regardless of whether you raced, so it is a genuine longitudinal fitness proxy. |
+| `fitness_age` | per-day | Fitness age, chronological age, achievable age, plus the *components* (body fat, RHR, vigorous days/minutes) with each one's target and potential age — i.e. what is holding the number back. |
+| `daily_summary` | per-day | Garmin's own end-of-day reconciliation. **94 fields, 83 populated** on a sampled day: energy, steps, floors, intensity minutes, the full stress breakdown, body battery, respiration, SpO2, resting HR. |
+| `hydration` | per-day | Intake, goal, and **`sweat_loss_ml`** — Garmin's fluid-loss estimate, which tracks heat stress and activity volume. |
+| `intensity_minutes` | per-day | Rolling **weekly** moderate/vigorous totals against the weekly goal. Distinct from the daily-summary fields of similar name. |
+| `personal_records` | snapshot | 22 current records with the activity that set each. |
+| `devices` | snapshot | 5 registered devices. Useful provenance: `metadataDTO.sensors` is null 2016–2026, so this is the available answer to "which watch recorded this era". |
+
+### The 365-day cap
+
+`racepredictions/daily` returns HTTP 400 for any span over 365 days — verified
+by bisection (365 days → 366 rows, 366 days → 400). A whole-history request
+fails outright, which is easy to misread as "no data". `_year_chunks` splits
+longer spans.
+
+### `daily_summary` overlaps existing datasets — deliberately
+
+Steps, resting HR, stress durations, body battery, respiration and SpO2 all
+already have dedicated datasets. `daily_summary` is kept anyway because it is
+Garmin's own end-of-day reconciliation and can disagree with the per-metric
+endpoints. **Treat the dedicated dataset as canonical and `daily_summary` as a
+cross-check**, and do not feed both into one model as independent features.
+
+It also carries `avg_environment_altitude_m` — a second, independent daily
+altitude signal alongside `training_status.current_altitude_m`.
+
+---
+
+## Activity types that were being discarded (2026-08-19)
+
+A full `pull_activity_list("2010-01-01", ...)` returned **3838 activities across
+27 typeKeys**. The registry claimed 12. **280 activities — 267 hours — were
+being pulled from Garmin and then silently dropped** because no dataset claimed
+their typeKey.
+
+All 15 missing types are now registered and backfilled:
+
+| typeKey | n | Hours | Through |
+|---|---|---|---|
+| `treadmill_running` | 108 | 27.4 | 2026-01-06 |
+| `indoor_climbing` | 91 | 154.3 | 2026-07-21 |
+| `indoor_running` | 18 | 3.2 | 2020-03-13 |
+| `multi_sport` | 15 | 28.6 | 2019-04-06 |
+| `tennis_v2` | 13 | 13.2 | 2023-02-20 |
+| `trail_running` | 9 | 4.3 | 2026-02-06 |
+| `transition_v2` | 8 | 0.1 | 2016-04-23 |
+| `other` | 6 | 20.4 | 2024-02-10 |
+| `paddling_v2`, `volleyball` | 3, 3 | 5.6, 6.5 | 2022, 2023 |
+| `swimming` | 2 | 0.9 | 2021-10-18 |
+| `softball`, `resort_skiing_snowboarding_ws`, `fitness_equipment`, `walking` | 1 each | ~2.4 | |
+
+### `tennis` was a silent failure, not an omission
+
+The `tennis` dataset **was** registered — but the registry derived the Garmin
+typeKey from the dataset name, and Garmin calls it **`tennis_v2`**. So it was
+queried for years and always came back empty, which is indistinguishable from
+"never played tennis". Nothing errored and nothing logged.
+
+Garmin has versioned several keys this way, so `garmin.datasets.ACTIVITY_TYPE_KEYS`
+now holds the mapping explicitly rather than inferring it:
+
+| Dataset | Garmin typeKey |
+|---|---|
+| `strength` | `strength_training` |
+| `tennis` | `tennis_v2` |
+| `paddling` | `paddling_v2` |
+| `transition` | `transition_v2` |
+| `skiing` | `resort_skiing_snowboarding_ws` |
+
+### Running variants are separate datasets on purpose
+
+`treadmill_running`, `indoor_running` and `trail_running` are **not** folded
+into `running`. Treadmill pace has no GPS behind it — it is estimated from
+cadence — so mixing it in would quietly corrupt pace trends. Trail running
+distorts pace through terrain instead. Keeping them separate leaves both
+analyzable without contaminating the existing series.
+
+### `multi_sport` does not double-count
+
+Checked before adding: multi_sport rows carry `parentId=None` and their
+constituent legs are **not** separately listed (the 147-minute 2019-03-24 entry
+has no siblings that day). So these are genuinely missing triathlons, not
+duplicates of activities already counted.

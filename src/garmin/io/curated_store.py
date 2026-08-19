@@ -56,6 +56,40 @@ class CuratedDataStore:
             self._prepare_for_parquet(df), self.hr_zones_path(), format="parquet"
         )
 
+    @staticmethod
+    def metadata_path(name: str) -> str:
+        """Path for an undated snapshot dataset.
+
+        Args:
+            name: Snapshot name, e.g. ``"personal_records"``.
+
+        Returns:
+            The ``curated/metadata/`` parquet path.
+        """
+        return f"curated/metadata/{name}.parquet"
+
+    def load_metadata(self, name: str) -> pd.DataFrame:
+        """Read an undated snapshot dataset, empty if absent."""
+        return self._read_df_or_empty(self.metadata_path(name))
+
+    def write_metadata(self, name: str, df: pd.DataFrame) -> None:
+        """Replace an undated snapshot dataset wholesale.
+
+        These describe current state rather than a time series -- personal
+        records, registered devices -- so there is nothing to merge: a
+        re-pull replaces what was there.
+
+        Args:
+            name: Snapshot name.
+            df: Rows to store. An empty frame is ignored rather than being
+                written, so a failed pull cannot erase good data.
+        """
+        if df.empty:
+            return
+        self.file_manager.write_df(
+            self._prepare_for_parquet(df), self.metadata_path(name), format="parquet"
+        )
+
     def load_daily(self, dataset: str) -> pd.DataFrame:
         return self._read_df_or_empty(self.daily_dataset_path(dataset))
 
