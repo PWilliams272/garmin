@@ -549,7 +549,9 @@ def test_activity_detail_data_route_strength_uses_strength_payload(tmp_path, mon
     _seed_strength_detail(routes_module.curated_local, '555', '2024-03-01')
 
     with app.test_client() as client:
-        response = client.get('/api/activity_detail_data?sport=strength')
+        # Explicit source: DEFAULT_SOURCE is 's3' since 2026-08-19, and a test
+        # must never depend on -- or reach -- the real bucket.
+        response = client.get('/api/activity_detail_data?sport=strength&source=local')
 
     payload = response.get_json()
     assert payload['mock'] is False
@@ -563,7 +565,7 @@ def test_activity_detail_data_route_strength_falls_back_to_mock(tmp_path, monkey
     monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
 
     with app.test_client() as client:
-        response = client.get('/api/activity_detail_data?sport=strength')
+        response = client.get('/api/activity_detail_data?sport=strength&source=local')
 
     payload = response.get_json()
     assert payload['mock'] is True

@@ -3,15 +3,6 @@
 {% block subtitle %}Review and correct Garmin's exercise guesses, session by session{% endblock %}
 {% block content %}
 <section class="card chart-card">
-    <div class="control-grid">
-        <label class="inline-select-control">
-            Data Source
-            <select id="source-select">
-                <option value="local" selected>Local Curated Files</option>
-                <option value="s3">S3 Curated Files</option>
-            </select>
-        </label>
-    </div>
     <div class="status-line" id="review-status-line" style="margin-top: 12px;">Loading…</div>
     <div class="status-line" id="review-counts" style="margin-top: 4px;"></div>
 </section>
@@ -169,7 +160,10 @@ function renderCounts(counts) {
 }
 
 let exerciseOptions = [];
-let currentSource = 'local';
+// The store the server is reading (routes.DEFAULT_SOURCE). This page also
+// *writes* -- accepting and rejecting exercise labels -- so a hardcoded value
+// here could send corrections to a different store than the one being shown.
+let currentSource = {{ data_source|tojson }};
 let currentActivityId = null;
 
 async function loadOptions() {
@@ -327,13 +321,7 @@ async function selectActivity(activityId) {
 
 document.getElementById('submit-activity-btn').addEventListener('click', submitActivity);
 
-document.getElementById('source-select').addEventListener('change', (event) => {
-    currentSource = event.target.value;
-    currentActivityId = null;
-    document.getElementById('detail-content').style.display = 'none';
-    document.getElementById('detail-empty-state').style.display = 'block';
-    loadActivities(currentSource);
-});
+
 
 (async function init() {
     await loadOptions();

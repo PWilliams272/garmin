@@ -24,6 +24,10 @@
             <h1>Garmin<span style="color: var(--lg-gold);">.</span></h1>
             <div class="brand-subtitle">{% block subtitle %}Health, fitness, and activity data in one place{% endblock %}</div>
         </div>
+        <div class="source-pill" title="Every page reads this curated store">
+            <span class="source-pill-dot"></span>
+            <span class="source-pill-label">{{ 'S3' if data_source == 's3' else 'Local' }}</span>
+        </div>
     </header>
     <nav class="tab-bar" role="tablist" aria-label="Sections">
         <a href="{{ url_for('garmin.quick_dashboard') }}" class="tab-button{% if active_section == 'health' %} active{% endif %}" role="tab" aria-selected="{{ 'true' if active_section == 'health' else 'false' }}">Health</a>

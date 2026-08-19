@@ -20,18 +20,23 @@ from garmin.prototypes.activity_explorer import (
     _front_body_svg,
     _back_body_svg,
 )
+import gzip
+
 import numpy as np
 import pandas as pd
 import math
 import os
 import random as _random
 
-# Which curated store ('local' or 's3') API routes read from when the
-# request doesn't specify ?source= explicitly. The standalone deployed
-# viewer (no local curated/ directory on that host) sets
-# GARMIN_VIEWER_SOURCE=s3 via its systemd unit; local dev keeps the
-# 'local' default.
-DEFAULT_SOURCE = os.environ.get('GARMIN_VIEWER_SOURCE', 'local')
+# Which curated store ('local' or 's3') routes read from. S3 is the source
+# of truth -- the nightly pipeline writes there, the deployed viewer has no
+# local curated/ directory at all, and a stale local copy silently serving
+# different numbers than the site is worse than being slower. The per-page
+# source picker was removed 2026-08-19 for the same reason.
+#
+# GARMIN_VIEWER_SOURCE still overrides it, and routes still honour an
+# explicit ?source=local, which is how the tests exercise the local store.
+DEFAULT_SOURCE = os.environ.get('GARMIN_VIEWER_SOURCE', 's3')
 if DEFAULT_SOURCE not in {'local', 's3'}:
     DEFAULT_SOURCE = 'local'
 
@@ -51,15 +56,22 @@ def local_pages_enabled() -> bool:
     1. ``GARMIN_ENABLE_LOCAL_PAGES=1`` must be set. Absent it, the pages 404.
        ``garmin.app.app.main`` sets it, so the documented local run works
        with no extra setup, while a gunicorn-served deployment never does.
-    2. The app must not be reading from S3. The deployed viewer's systemd
-       unit sets ``GARMIN_VIEWER_SOURCE=s3``; local dev does not.
+    2. ``GARMIN_VIEWER_SOURCE`` must be unset. The deployed viewer's systemd
+       unit sets it explicitly; local dev does not.
+
+       This checks for the variable's *presence*, not its value. It used to
+       compare the resolved source against ``'s3'``, which broke the moment
+       S3 became the default everywhere (2026-08-19) -- local dev then read
+       S3 too, and the guard hid these pages locally as well. Presence of the
+       deployment's own marker is the durable signal; what it is set to is
+       not.
 
     Returns:
         True when these pages should be reachable.
     """
     if os.environ.get('GARMIN_ENABLE_LOCAL_PAGES') != '1':
         return False
-    return DEFAULT_SOURCE != 's3'
+    return 'GARMIN_VIEWER_SOURCE' not in os.environ
 
 
 RUNNING_ANALYZED_METRICS = ['cadence_spm', 'pace_min_per_mile', 'distance_mi']
@@ -73,11 +85,81 @@ bp = Blueprint(
     static_folder="static"
 )
 
+#: Responses smaller than this are sent uncompressed -- below roughly a
+#: network packet, gzip costs CPU on both ends and saves nothing.
+_GZIP_MIN_BYTES = 1024
+
+#: Decimal places kept when serializing floats. These payloads are chart
+#: series: three decimals is far beyond what a pixel can express, but the raw
+#: values arrive with full float64 repr (e.g. 0.0033531581902934704, 21
+#: characters for one point). Across ~3900 points x 6 metrics that is roughly
+#: half the payload, and it costs the browser parse time as well as bandwidth.
+JSON_FLOAT_PRECISION = 3
+
+
+def _round_floats(value):
+    """Recursively round floats for serialization.
+
+    Args:
+        value: Any JSON-serializable structure.
+
+    Returns:
+        The same structure with floats rounded to
+        :data:`JSON_FLOAT_PRECISION`. NaN and infinity are passed through
+        unchanged -- ``round`` preserves them, and the payload builders are
+        responsible for turning NaN into null before it reaches here.
+    """
+    if isinstance(value, float):
+        return round(value, JSON_FLOAT_PRECISION)
+    if isinstance(value, dict):
+        return {k: _round_floats(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_round_floats(v) for v in value]
+    return value
+
+
+@bp.after_request
+def _compress_json(response):
+    """Gzip JSON responses when the client accepts it.
+
+    Done in the app rather than nginx deliberately. The host's nginx.conf has
+    `gzip on` but leaves `gzip_types` commented out, and nginx's default is
+    text/html only -- so every JSON payload here was being served
+    uncompressed, including a 7MB dashboard response. Compressing here works
+    regardless of that config and cannot drift away from it again.
+    """
+    if response.direct_passthrough or response.status_code >= 300:
+        return response
+    if not response.mimetype or 'json' not in response.mimetype:
+        return response
+    if 'gzip' in response.headers.get('Content-Encoding', ''):
+        return response
+    if 'gzip' not in request.headers.get('Accept-Encoding', ''):
+        return response
+    data = response.get_data()
+    if len(data) < _GZIP_MIN_BYTES:
+        return response
+    response.set_data(gzip.compress(data, compresslevel=6))
+    response.headers['Content-Encoding'] = 'gzip'
+    response.headers['Content-Length'] = response.content_length
+    # Shared caches must not hand a gzipped body to a client that didn't ask.
+    response.headers['Vary'] = 'Accept-Encoding'
+    return response
+
+
 @bp.app_context_processor
-def _inject_local_pages_flag():
-    """Expose the local-only gate to templates, so navigation never links to
-    a page that would 404 for the visitor seeing it."""
-    return {'local_pages_enabled': local_pages_enabled()}
+def _inject_template_globals():
+    """Values every template needs.
+
+    `local_pages_enabled` keeps navigation from linking to a page that would
+    404 for the visitor seeing it. `data_source` drives the status pill, so
+    which store a page is reading is always visible rather than assumed --
+    the reason the source picker could be removed at all.
+    """
+    return {
+        'local_pages_enabled': local_pages_enabled(),
+        'data_source': DEFAULT_SOURCE,
+    }
 
 
 fm_local = FileManager(environment='local')
@@ -134,9 +216,10 @@ def _cached_or_live(cache_name: str, source: str, build_fn):
     """
     store = curated_s3 if source == 's3' else curated_local
     cached = store.load_viewer_cache(cache_name)
-    if cached is not None:
-        return cached
-    return build_fn()
+    payload = cached if cached is not None else build_fn()
+    # Rounded here rather than in each builder so cached and live payloads
+    # are byte-identical, and so a new page can't forget to do it.
+    return _round_floats(payload)
 
 
 def _cached_html_or_live(cache_name: str, source: str, build_fn):
@@ -161,7 +244,14 @@ DATA_STATUS_DETAILED_DATASETS = [
 # (untouched); there's no way yet to distinguish "Garmin had nothing for
 # that date" from "we haven't tried."
 DATA_STATUS_DAILY_DATASETS = [
+    # Core wellness.
     'health_stats', 'steps', 'sleep', 'stress', 'body_battery', 'heart_rate', 'hrv', 'respiration',
+    # Garmin's own training metrics.
+    'training_readiness', 'training_status', 'vo2max',
+    # Daily scalar summaries read from the wellness detail endpoints.
+    'wellness_heart_rate', 'wellness_respiration', 'wellness_spo2',
+    # Endpoints added 2026-08-19 that had never been called.
+    'race_predictions', 'fitness_age', 'daily_summary', 'hydration', 'intensity_minutes',
 ]
 
 DATA_STATUS_CODES = {'untouched': 0, 'no_data': 1, 'denied': 2, 'fetched': 3}

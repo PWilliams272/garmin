@@ -29,13 +29,6 @@
 <div class="paper-layout" id="pane">
 <div class="paper-toolbar">
     <span class="status-line" id="report-status">Loading…</span>
-    <label class="inline-select-control">
-        Source
-        <select id="source-select">
-            <option value="local" selected>Local</option>
-            <option value="s3">S3</option>
-        </select>
-    </label>
 </div>
 
 <main class="paper-main">
@@ -1690,8 +1683,7 @@ document.getElementById('logit-slider').addEventListener('input', renderLogitSqu
 document.getElementById('walk-slider').addEventListener('input', renderRandomWalk);
 ['beta-slider', 'onerm-slider'].forEach(id => document.getElementById(id).addEventListener('input', renderCurveExplorer));
 document.getElementById('knot-slider').addEventListener('input', renderKnots);
-document.getElementById('source-select').addEventListener('change', (e) => loadReport(e.target.value));
 
-loadReport('local');
+loadReport({{ data_source|tojson }});
 </script>
 {% endblock %}

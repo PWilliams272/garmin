@@ -40,15 +40,24 @@ def test_only_the_exact_value_1_opens_the_gate(client, monkeypatch, value):
 
 def test_modeling_is_served_when_explicitly_enabled(client, monkeypatch):
     monkeypatch.setenv('GARMIN_ENABLE_LOCAL_PAGES', '1')
-    monkeypatch.setattr(routes_module, 'DEFAULT_SOURCE', 'local')
+    monkeypatch.delenv('GARMIN_VIEWER_SOURCE', raising=False)
     assert client.get('/modeling').status_code == 200
 
 
-def test_reading_from_s3_keeps_the_page_hidden_even_with_the_flag_set(client, monkeypatch):
+def test_the_deployment_marker_keeps_the_page_hidden_even_with_the_flag_set(client, monkeypatch):
     """The second, independent guard: the deployed viewer's systemd unit sets
-    GARMIN_VIEWER_SOURCE=s3, so even a leaked flag cannot publish the page."""
+    GARMIN_VIEWER_SOURCE, so even a leaked flag cannot publish the page."""
     monkeypatch.setenv('GARMIN_ENABLE_LOCAL_PAGES', '1')
-    monkeypatch.setattr(routes_module, 'DEFAULT_SOURCE', 's3')
+    monkeypatch.setenv('GARMIN_VIEWER_SOURCE', 's3')
+    assert client.get('/modeling').status_code == 404
+
+
+def test_the_guard_keys_off_presence_not_value(client, monkeypatch):
+    """Regression: the guard used to compare the resolved source against 's3'.
+    When S3 became the default everywhere, local dev read S3 too and the page
+    vanished locally. Any value of the deployment marker must hide it."""
+    monkeypatch.setenv('GARMIN_ENABLE_LOCAL_PAGES', '1')
+    monkeypatch.setenv('GARMIN_VIEWER_SOURCE', 'local')
     assert client.get('/modeling').status_code == 404
 
 
@@ -68,7 +77,7 @@ def test_nav_does_not_link_to_modeling_when_it_is_hidden(client, monkeypatch):
 
 def test_nav_links_to_modeling_when_it_is_available(client, monkeypatch):
     monkeypatch.setenv('GARMIN_ENABLE_LOCAL_PAGES', '1')
-    monkeypatch.setattr(routes_module, 'DEFAULT_SOURCE', 'local')
+    monkeypatch.delenv('GARMIN_VIEWER_SOURCE', raising=False)
     body = client.get('/data_status').get_data(as_text=True)
     assert '/modeling' in body
 

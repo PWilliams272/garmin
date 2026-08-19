@@ -6,39 +6,16 @@
 {% endblock %}
 {% block content %}
 <section class="card chart-card">
-    <div class="control-grid">
-        <label class="inline-select-control">
-            Data Source
-            <select id="source-select">
-                <option value="local" selected>Local Curated Files</option>
-                <option value="s3">S3 Curated Files</option>
-            </select>
-        </label>
-    </div>
-    <div class="status-line" id="data-status-status" style="margin-top: 12px;">Loading…</div>
-</section>
-
-<section class="card chart-card">
     <div class="section-heading">Pull Status Calendar</div>
-    <div style="display: flex; gap: 16px; align-items: center; margin-bottom: 10px; font-size: var(--fs-sm); color: var(--lg-text-2);">
-        <span><span class="status-swatch" style="background: var(--lg-success);"></span> Fetched</span>
-        <span><span class="status-swatch" style="background: var(--lg-text-2);"></span> No data (confirmed empty)</span>
-        <span><span class="status-swatch" style="background: var(--lg-warning);"></span> Denied (rate-limited — may still have data)</span>
-        <span><span class="status-swatch" style="background: var(--lg-border);"></span> Untouched</span>
+    <div class="status-legend">
+        <span class="status-chip"><span class="status-swatch" style="background: var(--lg-success);"></span>Fetched</span>
+        <span class="status-chip"><span class="status-swatch" style="background: var(--lg-text-2);"></span>No data <span class="status-chip-note">confirmed empty</span></span>
+        <span class="status-chip"><span class="status-swatch" style="background: var(--lg-warning);"></span>Denied <span class="status-chip-note">rate-limited, may still have data</span></span>
+        <span class="status-chip"><span class="status-swatch" style="background: var(--lg-border);"></span>Untouched</span>
     </div>
-    <div class="chart-host" id="status-heatmap" style="min-height: 300px;"></div>
+    <div class="status-line" id="data-status-status">Loading…</div>
+    <div class="chart-host" id="status-heatmap" style="min-height: 300px; margin-top: 12px;"></div>
 </section>
-
-<style>
-.status-swatch {
-    display: inline-block;
-    width: 10px;
-    height: 10px;
-    border-radius: 2px;
-    margin-right: 4px;
-    vertical-align: middle;
-}
-</style>
 
 <script>
 // token() is defined once in static/js/tokens.js -- it resolves color-mix()
@@ -127,10 +104,13 @@ function renderStatusHeatmap(payload) {
     });
 }
 
-async function loadDataStatus(source) {
+// No source argument: the server picks the store (see routes.DEFAULT_SOURCE)
+// and the header pill reports which one, so a page can't quietly be reading
+// somewhere other than where it says.
+async function loadDataStatus() {
     setStatus('Loading…');
     try {
-        const response = await fetch('/api/data_status_data?source=' + encodeURIComponent(source));
+        const response = await fetch('/api/data_status_data');
         if (!response.ok) throw new Error('Failed to load data status (' + response.status + ')');
         const payload = await response.json();
         if (payload.error) throw new Error(payload.error);
@@ -145,10 +125,6 @@ async function loadDataStatus(source) {
     }
 }
 
-document.getElementById('source-select').addEventListener('change', (event) => {
-    loadDataStatus(event.target.value);
-});
-
-loadDataStatus('local');
+loadDataStatus();
 </script>
 {% endblock %}

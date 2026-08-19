@@ -11,13 +11,6 @@
                 <div class="section-heading">Setup</div>
                 <div class="control-grid control-grid-stack">
                     <label class="inline-select-control">
-                        Data Source
-                        <select id="source-select">
-                            <option value="local" {% if source == 'local' %}selected{% endif %}>Local Curated Files</option>
-                            <option value="s3" {% if source == 's3' %}selected{% endif %}>S3 Curated Files</option>
-                        </select>
-                    </label>
-                    <label class="inline-select-control">
                         Range
                         <div class="range-group range-group-stack" id="range-group">
                             <button type="button" data-days="7">7D</button>
@@ -566,9 +559,7 @@ document.getElementById('apply-custom-range').addEventListener('click', () => {
     renderCharts();
 });
 
-document.getElementById('source-select').addEventListener('change', (event) => {
-    loadDashboard(event.target.value).catch((error) => setStatus(error.message));
-});
+
 
 document.querySelectorAll('.collapsible-header').forEach((header) => {
     header.addEventListener('click', () => {

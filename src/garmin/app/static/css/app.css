@@ -549,3 +549,72 @@ td.num, th.num {
     gap: 14px;
   }
 }
+
+/* --- Data-source pill -----------------------------------------------------
+   Replaces the per-page source picker (removed 2026-08-19). The store is no
+   longer selectable, so the pill's job is to make it *visible* rather than
+   assumed -- a page quietly reading a stale local copy while looking
+   identical to the live site was the failure this prevents. */
+.source-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  padding: 5px 11px 5px 9px;
+  border: 1px solid var(--lg-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--lg-surface) 70%, transparent);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--lg-text-2);
+  white-space: nowrap;
+}
+
+.source-pill-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--lg-success);
+  /* A soft halo rather than a hard dot, so it reads as a live indicator
+     without competing with the nav for attention. */
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lg-success) 22%, transparent);
+}
+
+/* --- Status legend chips --------------------------------------------------
+   Was a row of bare 10px squares with plain text. These read as discrete
+   keys tied to the calendar below them. */
+.status-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px;
+  border: 1px solid var(--lg-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--lg-surface) 55%, transparent);
+  font-size: var(--fs-xs);
+  color: var(--lg-text-2);
+  line-height: 1.5;
+}
+
+.status-chip .status-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  flex: 0 0 auto;
+  /* An inset hairline keeps the pale swatches (untouched, no-data) from
+     dissolving into the chip background in either theme. */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lg-text-1) 12%, transparent);
+}
+
+.status-chip-note {
+  color: var(--lg-text-3);
+}
