@@ -38,7 +38,10 @@ import random as _random
 # explicit ?source=local, which is how the tests exercise the local store.
 DEFAULT_SOURCE = os.environ.get('GARMIN_VIEWER_SOURCE', 's3')
 if DEFAULT_SOURCE not in {'local', 's3'}:
-    DEFAULT_SOURCE = 'local'
+    # A typo'd value falls back to S3, not local: on the deployed host there
+    # is no local curated/ directory, so falling back to local would serve
+    # nothing at all rather than serving the truth.
+    DEFAULT_SOURCE = 's3'
 
 #: Pages that exist locally but are deliberately not served on
 #: garmin.peterwilliams.dev. Gated fail-closed: hidden unless *explicitly*
