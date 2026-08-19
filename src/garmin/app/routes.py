@@ -1,4 +1,4 @@
-from flask import Blueprint, Response, jsonify, render_template, request, url_for, redirect
+from flask import Blueprint, Response, abort, jsonify, render_template, request, url_for, redirect
 from garmin.io.curated_store import CuratedDataStore
 from garmin.io.file_manager import FileManager
 from garmin.data_processor.processor import GarminDataProcessor
@@ -14,7 +14,6 @@ from garmin.analysis.analysis_pipeline import (
 )
 from garmin.datasets import ACTIVITY_DATASETS
 from garmin.prototypes.activity_explorer import (
-    build_activity_explorer_html,
     blended_1rm,
     EXERCISE_MUSCLES,
     format_exercise_label,
@@ -36,6 +35,33 @@ DEFAULT_SOURCE = os.environ.get('GARMIN_VIEWER_SOURCE', 'local')
 if DEFAULT_SOURCE not in {'local', 's3'}:
     DEFAULT_SOURCE = 'local'
 
+#: Pages that exist locally but are deliberately not served on
+#: garmin.peterwilliams.dev. Gated fail-closed: hidden unless *explicitly*
+#: enabled, so a missing or mistyped environment variable hides the page
+#: rather than publishing it.
+LOCAL_ONLY_PAGES = ('modeling',)
+
+
+def local_pages_enabled() -> bool:
+    """Whether the local-only pages (see LOCAL_ONLY_PAGES) should be served.
+
+    Two independent conditions must hold, so no single misconfiguration can
+    publish these pages:
+
+    1. ``GARMIN_ENABLE_LOCAL_PAGES=1`` must be set. Absent it, the pages 404.
+       ``garmin.app.app.main`` sets it, so the documented local run works
+       with no extra setup, while a gunicorn-served deployment never does.
+    2. The app must not be reading from S3. The deployed viewer's systemd
+       unit sets ``GARMIN_VIEWER_SOURCE=s3``; local dev does not.
+
+    Returns:
+        True when these pages should be reachable.
+    """
+    if os.environ.get('GARMIN_ENABLE_LOCAL_PAGES') != '1':
+        return False
+    return DEFAULT_SOURCE != 's3'
+
+
 RUNNING_ANALYZED_METRICS = ['cadence_spm', 'pace_min_per_mile', 'distance_mi']
 
 MOCK_MA_BANDWIDTH_DAYS = 21
@@ -46,6 +72,13 @@ bp = Blueprint(
     template_folder="templates",
     static_folder="static"
 )
+
+@bp.app_context_processor
+def _inject_local_pages_flag():
+    """Expose the local-only gate to templates, so navigation never links to
+    a page that would 404 for the visitor seeing it."""
+    return {'local_pages_enabled': local_pages_enabled()}
+
 
 fm_local = FileManager(environment='local')
 fm_s3 = FileManager(environment='aws')
@@ -1568,6 +1601,10 @@ def exercise_review():
 
 @bp.route('/modeling')
 def modeling():
+    """Local-only: the methodology explainer is deliberately not published on
+    garmin.peterwilliams.dev. See local_pages_enabled."""
+    if not local_pages_enabled():
+        abort(404)
     return render_template('modeling.html', active_section='modeling')
 
 
@@ -1580,6 +1617,8 @@ def api_model_report_data():
     several sections scan every per-activity strength file, which is far too
     expensive to do per request against S3.
     """
+    if not local_pages_enabled():
+        abort(404)
     import traceback
 
     source = request.args.get('source', DEFAULT_SOURCE)
@@ -1754,24 +1793,6 @@ def api_exercise_review_submit_activity():
         print(f"Error submitting exercise review activity: {e}")
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
-
-
-@bp.route('/muscle_explorer')
-def muscle_explorer():
-    """Serves the standalone lifting/climbing/muscle-map prototype (see
-    garmin.prototypes.activity_explorer) as a real page instead of a
-    manually-regenerated local file. Prefers the precomputed viewer-cache
-    HTML (built by manual_build_viewer_cache.py) -- live-building this
-    against S3 means garmin.io.curated_store.load_all_activity_details
-    doing one S3 GET per strength-session detail file (490+ as of
-    2026-08), so an uncached hit would be very slow.
-    """
-    source = request.args.get('source', DEFAULT_SOURCE)
-    if source not in {'local', 's3'}:
-        source = DEFAULT_SOURCE
-    store = curated_s3 if source == 's3' else curated_local
-    html = _cached_html_or_live(f'activity_explorer_{source}', source, lambda: build_activity_explorer_html(store))
-    return Response(html, mimetype='text/html')
 
 
 @bp.route('/api/data_status_data')

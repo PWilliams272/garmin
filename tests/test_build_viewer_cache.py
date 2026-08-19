@@ -47,7 +47,6 @@ def test_build_viewer_cache_continues_after_one_job_fails(tmp_path, monkeypatch)
     monkeypatch.setattr(routes_module, '_activities_real_payload', lambda source='local': {'also_ok': True})
     monkeypatch.setattr(routes_module, '_activities_list_payload', lambda source='local': None)
     monkeypatch.setattr(routes_module, '_data_status_payload', lambda source='local': None)
-    monkeypatch.setattr(build_viewer_cache_module, 'build_activity_explorer_html', lambda store: '<html>ok</html>')
 
     with pytest.raises(RuntimeError, match='fitness_running_local'):
         build_viewer_cache('local')
@@ -56,7 +55,6 @@ def test_build_viewer_cache_continues_after_one_job_fails(tmp_path, monkeypatch)
     # Jobs before *and after* the failing one still ran and cached normally.
     assert store.load_viewer_cache('quick_dashboard_local') == {'ok': True}
     assert store.load_viewer_cache('activities_overview_local') == {'also_ok': True}
-    assert store.load_viewer_cache_html('activity_explorer_local') == '<html>ok</html>'
     assert store.load_viewer_cache('fitness_running_local') is None
 
 
@@ -87,12 +85,10 @@ def test_build_viewer_cache_continues_after_a_write_fails(tmp_path, monkeypatch)
     monkeypatch.setattr(routes_module, '_activities_real_payload', lambda source='local': {'also_ok': True})
     monkeypatch.setattr(routes_module, '_activities_list_payload', lambda source='local': None)
     monkeypatch.setattr(routes_module, '_data_status_payload', lambda source='local': None)
-    monkeypatch.setattr(build_viewer_cache_module, 'build_activity_explorer_html', lambda store: '<html>ok</html>')
 
     with pytest.raises(RuntimeError, match='fitness_running_local'):
         build_viewer_cache('local')
 
     assert store.load_viewer_cache('quick_dashboard_local') == {'ok': True}
     assert store.load_viewer_cache('activities_overview_local') == {'also_ok': True}
-    assert store.load_viewer_cache_html('activity_explorer_local') == '<html>ok</html>'
     assert store.load_viewer_cache('fitness_running_local') is None

@@ -95,7 +95,7 @@
                 between sets. <b>Intensity</b> is the estimated 1RM that set demonstrated, as a share of
                 your best known 1RM for that exercise &mdash; rep-adjusted, so a hard high-rep set reads
                 as hard. <b>Fatigue</b> is a decaying sum of work done so far
-                (<a href="/modeling#model">a heuristic, not a fitted result</a>).
+                ({% if local_pages_enabled %}<a href="/modeling#model">a heuristic, not a fitted result</a>{% else %}a heuristic, not a fitted result{% endif %}).
             </div>
             <div class="chart-host" id="strength-timeline-chart" style="min-height: 300px;"></div>
         </div>

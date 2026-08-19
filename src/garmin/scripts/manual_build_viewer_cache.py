@@ -14,7 +14,6 @@ from garmin.io.file_manager import FileManager
 # guaranteed identical in shape.
 from garmin.analysis.model_report import build_model_report
 from garmin.app import routes as app_routes
-from garmin.prototypes.activity_explorer import build_activity_explorer_html
 
 
 def build_viewer_cache(storage_target: str) -> None:
@@ -48,8 +47,7 @@ def build_viewer_cache(storage_target: str) -> None:
     ]
 
     # Each job is independent -- one dataset's transient failure (e.g. a
-    # dropped connection partway through activity_explorer's 490+ individual
-    # S3 reads for per-set strength detail, seen in practice 2026-08-03)
+    # dropped connection mid-read against S3, seen in practice 2026-08-03)
     # shouldn't abort every other page's rebuild. Failures are collected and
     # reported at the end rather than swallowed, so a cron/Lambda-scheduled
     # run still surfaces the problem in its logs.
@@ -71,20 +69,9 @@ def build_viewer_cache(storage_target: str) -> None:
             print(f"FAILED {cache_name}: {exc!r}")
             failures.append(cache_name)
 
-    # HTML pages (not JSON payloads) get their own cache path -- see
-    # CuratedDataStore.write_viewer_cache_html / _cached_html_or_live in
-    # garmin/app/routes.py.
-    html_jobs = [
-        (f'activity_explorer_{source}', lambda: build_activity_explorer_html(store)),
-    ]
-    for cache_name, build_fn in html_jobs:
-        try:
-            html = build_fn()
-            store.write_viewer_cache_html(cache_name, html)
-            print(f"Wrote viewer_cache/{cache_name}.html.")
-        except Exception as exc:
-            print(f"FAILED {cache_name}: {exc!r}")
-            failures.append(cache_name)
+    # No HTML-page caches remain: the muscle explorer was the only one, and
+    # it was removed with its page (2026-08-18). The write_viewer_cache_html /
+    # _cached_html_or_live pair is still available if a future page needs it.
 
     if failures:
         raise RuntimeError(f"viewer cache build had {len(failures)} failure(s): {', '.join(failures)}")

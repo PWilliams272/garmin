@@ -322,19 +322,6 @@ def test_cached_html_or_live_falls_back_when_no_cache(tmp_path, monkeypatch) -> 
     assert result == '<html>live</html>'
 
 
-def test_muscle_explorer_route_serves_cached_html(tmp_path, monkeypatch) -> None:
-    app = create_app()
-    monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
-    routes_module.curated_local.write_viewer_cache_html('activity_explorer_local', '<html><body>cached explorer</body></html>')
-
-    with app.test_client() as client:
-        response = client.get('/muscle_explorer?source=local')
-
-    assert response.status_code == 200
-    assert response.content_type.startswith('text/html')
-    assert b'cached explorer' in response.data
-
-
 def test_data_status_payload_empty_when_nothing_pulled(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(routes_module.fm_local, 'local_dir', str(tmp_path))
 
@@ -929,12 +916,14 @@ def test_lifting_payload_curve_is_empty_when_the_fit_has_not_run(tmp_path, monke
     assert payload['exercises']['bench_press']['curve'] == []
 
 
-def test_model_report_payload_is_strictly_json_serializable() -> None:
+def test_model_report_payload_is_strictly_json_serializable(monkeypatch) -> None:
     """Flask's jsonify emits bare NaN, which every browser's JSON.parse then
     rejects -- taking down the whole page, not just the section at fault.
     This caught exactly that, from a branch that omitted a few columns."""
     import json
 
+    # /modeling and its API are local-only (see routes.local_pages_enabled).
+    monkeypatch.setenv('GARMIN_ENABLE_LOCAL_PAGES', '1')
     app = create_app()
     app.config.update(TESTING=True)
     with app.test_client() as client:
