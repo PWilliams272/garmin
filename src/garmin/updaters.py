@@ -10,6 +10,7 @@ from garmin.io.curated_store import CuratedDataStore
 from garmin.pullers.health import HealthPuller
 from garmin.pullers.health_detailed import HealthDetailedPuller
 from garmin.pullers.activities import ActivityPuller
+from garmin.pullers.training import TrainingPuller
 from sqlalchemy.dialects.postgresql import insert
 from garmin.io.models import (
     HealthStats, Steps, Sleep, Stress, BodyBattery, HeartRate, HRV, Respiration,
@@ -22,6 +23,32 @@ from garmin.io.models import (
 # imports: reaching it through this module dragged the Garmin pullers (and
 # fitparse) into the analyzer Lambda. Re-exported here for existing callers.
 from garmin.datasets import ACTIVITY_DATASETS  # noqa: E402
+
+
+#: Garmin's own per-day training metrics: curated dataset -> the TrainingPuller
+#: method that fills it. Both endpoints are strictly per-day (no range form),
+#: so the nightly run is bounded by NIGHTLY_LOOKBACK_DAYS rather than by the
+#: history length.
+TRAINING_METRIC_PULLERS = {
+    "training_readiness": "pull_training_readiness",
+    "training_status": "pull_training_status",
+}
+
+#: Daily scalar summaries read from the wellness detail endpoints that the
+#: nightly run already calls for their intraday arrays. Metric -> dataset.
+WELLNESS_DAILY_DATASETS = {
+    "heart_rate": "wellness_heart_rate",
+    "respiration": "wellness_respiration",
+    "spo2": "wellness_spo2",
+}
+
+#: How many days back a nightly run looks for days it has no row for. This is
+#: deliberately a small fixed window, not "everything since the last stored
+#: date": these are one-request-per-day endpoints, and an empty or badly stale
+#: dataset would otherwise make the nightly Lambda attempt a ~1000-request
+#: backfill and time out. Filling a gap older than this window is the job of
+#: manual_pull_training_metrics.py / manual_pull_wellness_daily.py.
+NIGHTLY_LOOKBACK_DAYS = 10
 
 
 def _detail_specs(
@@ -69,6 +96,7 @@ class DataUpdater:
         health_puller=None,
         health_detailed_puller=None,
         activity_puller=None,
+        training_puller=None,
     ):
         self.curated_store = curated_store
         if self.curated_store is not None:
@@ -78,6 +106,7 @@ class DataUpdater:
         self.health_puller = health_puller or HealthPuller(session)
         self.health_detailed_puller = health_detailed_puller or HealthDetailedPuller(session)
         self.activity_puller = activity_puller or ActivityPuller(session)
+        self.training_puller = training_puller or TrainingPuller(session)
         
         self.pull_fn_map = {
             HealthStats: lambda **kwargs: self.health_puller.pull_data('weight', **kwargs),
@@ -624,6 +653,109 @@ class DataUpdater:
             batch_size=batch_size
         )
 
+    def _nightly_window(self, dataset: str) -> tuple[str, str, set]:
+        """The bounded date range a nightly run should ask for, plus the days
+        it already holds.
+
+        Returns the last `NIGHTLY_LOOKBACK_DAYS` days rather than everything
+        since the last stored row. These are one-request-per-day endpoints, so
+        keying off the last stored date would make a stale or empty dataset
+        trigger a ~1000-request backfill inside the nightly Lambda. The window
+        is wide enough to self-heal a few missed nights and to pick up days
+        Garmin scored late; anything older is a job for the manual backfill
+        scripts.
+
+        Args:
+            dataset: Curated daily dataset name.
+
+        Returns:
+            ``(start_date, end_date, known_dates)``, dates as ``YYYY-MM-DD``.
+        """
+        today = datetime.today().date()
+        start = today - timedelta(days=NIGHTLY_LOOKBACK_DAYS)
+        existing = self.curated_store.load_daily(dataset)
+        if existing.empty or "date" not in existing.columns:
+            known = set()
+        else:
+            known = set(pd.to_datetime(existing["date"]).dt.date)
+        return start.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d"), known
+
+    def _merge_nightly_daily(self, dataset: str, frame) -> None:
+        """Merge a pulled frame into a curated daily dataset, reporting counts."""
+        if frame.empty:
+            print(f"{dataset}: no new days.")
+            return
+        merged = self.curated_store.merge_daily(dataset, frame)
+        print(f"{dataset}: pulled {len(frame)} new days, stored {len(merged)}.")
+
+    def _update_training_metrics_curated(self) -> None:
+        """Refresh Garmin's own training metrics: readiness, status, VO2max,
+        HR zones.
+
+        These were backfilled by hand and had no nightly refresh, so every one
+        of them -- including `current_altitude_m`, which is the only altitude
+        signal in the whole store -- silently stopped at the backfill date.
+        """
+        for dataset, method in TRAINING_METRIC_PULLERS.items():
+            start, end, known = self._nightly_window(dataset)
+            frame = getattr(self.training_puller, method)(
+                start, end, known_dates=known, show_progress=False,
+            )
+            self._merge_nightly_daily(dataset, frame)
+
+        # VO2max is a cheap range call, but only updates on a qualifying
+        # activity, so most nights return nothing.
+        start, end, _ = self._nightly_window("vo2max")
+        self._merge_nightly_daily("vo2max", self.training_puller.pull_vo2max(start, end))
+
+        # Undated: one record per sport, rewritten whole. Cheap, and it changes
+        # whenever max HR or lactate threshold is re-estimated.
+        zones = self.training_puller.pull_hr_zones()
+        if not zones.empty:
+            self.curated_store.write_hr_zones(zones)
+            print(f"hr_zones: {len(zones)} sports.")
+
+    def _update_wellness_daily_curated(self) -> None:
+        """Refresh the daily scalar summaries from the wellness detail
+        endpoints.
+
+        The nightly run already calls these endpoints for their intraday
+        arrays; this reads the scalar fields in the same responses, which were
+        discarded until 2026-08-18.
+        """
+        for metric, dataset in WELLNESS_DAILY_DATASETS.items():
+            start, end, known = self._nightly_window(dataset)
+            frame = self.health_detailed_puller.pull_daily_summaries(
+                metric, start, end, known_dates=known, show_progress=False,
+            )
+            self._merge_nightly_daily(dataset, frame)
+
+    def _update_supplementary_curated(self) -> list[str]:
+        """Refresh the additive curated datasets that hang off endpoints the
+        nightly run already touches.
+
+        Each step is isolated. These datasets are supplementary, and a Garmin
+        hiccup in one must not cost the run the health and activity data
+        already pulled. Failures are printed rather than swallowed so they are
+        visible in the Lambda logs, and returned so a caller can assert on
+        them.
+
+        Returns:
+            One ``"<label>: <error>"`` string per step that failed.
+        """
+        failures = []
+        for label, step in (
+            ("training metrics", self._update_training_metrics_curated),
+            ("wellness daily summaries", self._update_wellness_daily_curated),
+        ):
+            try:
+                step()
+            except Exception as exc:  # noqa: BLE001 - one dataset must not fail the run
+                message = f"{label}: {type(exc).__name__}: {exc}"
+                print(f"WARNING: {message}")
+                failures.append(message)
+        return failures
+
     def update_all(self):
         model_class_list = [
             "HealthStats", "Steps", "Sleep", "Stress", "BodyBattery", "HeartRate",
@@ -636,3 +768,4 @@ class DataUpdater:
 
         if self.curated_store is not None:
             self._update_all_activities_curated()
+            self._update_supplementary_curated()
