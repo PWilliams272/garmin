@@ -40,6 +40,25 @@
 
 <main class="paper-main">
 
+<nav class="toc" aria-label="Table of contents">
+    <div class="toc-label">Contents</div>
+    <ol class="toc-list">
+        <li><a href="#overview">Overview</a></li>
+        <li><a href="#primer">Primer — the three moving parts</a></li>
+        <li><a href="#data">1 · The data</a></li>
+        <li><a href="#loadtype">2 · What does the &ldquo;weight&rdquo; column actually mean?</a></li>
+        <li><a href="#warmup">3 · Warmup sets drag a median fit into physically impossible territory</a></li>
+        <li><a href="#curve">4 · The load&ndash;rep curve &mdash; a data-fit version of Lombardi&rsquo;s power law</a></li>
+        <li><a href="#variants">5 · Combining variants onto one scale</a></li>
+        <li><a href="#model">6 · The model</a></li>
+        <li><a href="#fitting">7 · Fitting &amp; diagnostics &mdash; validated on synthetic data, not yet converged on the real one</a></li>
+        <li><a href="#hrv">8 · Training does move HRV &mdash; but only with a lag</a></li>
+        <li><a href="#predictive">9 · Beats persistence, but training features add nothing</a></li>
+        <li><a href="#roadmap">10 · Roadmap</a></li>
+        <li><a href="#provenance">11 · Provenance &mdash; what is borrowed, what is not</a></li>
+    </ol>
+</nav>
+
 <!-- ══ OVERVIEW ══ -->
 <section id="overview" class="paper-section">
     <h2>Overview</h2>
@@ -143,7 +162,8 @@
     <p>
         Everything is pulled from Garmin Connect into a curated parquet layer. Two families matter
         here: <strong>strength sets</strong> (one row per set: exercise, reps, weight) and
-        <strong>daily wellness</strong> (HRV, sleep, resting HR, stress, body battery).
+        <strong>daily wellness</strong> (HRV — heart rate variability, sleep, resting HR, stress, body
+        battery).
     </p>
     <p class="note">
         The binding constraint on anything wellness-related is that those signals only begin in
@@ -152,7 +172,7 @@
     </p>
     <div class="chart-host" id="coverage-chart"></div>
 
-    <h3>How sessions are structured</h3>
+    <h3>Supersets break the neighbour-based exercise-inference rule</h3>
     <p>
         Sets aren't always done in blocks. A <strong>superset</strong> alternates between two
         exercises — bench, curl, bench, curl — which means the set next to a given set is a
@@ -206,11 +226,18 @@
     </div>
     <div class="chart-host" id="load-type-chart"></div>
     <div class="callout" id="load-type-callout"></div>
+
+    <h3>The full taxonomy</h3>
+    <p class="note">
+        The chart above only carries exercises with enough loaded sets to test. This is the complete
+        assignment underneath it, including the exercises with too few sets to appear above.
+    </p>
+    <div class="data-table-wrap"><table class="data-table" id="load-type-table"></table></div>
 </section>
 
 <!-- ══ 3. WARMUP ══ -->
 <section id="warmup" class="paper-section">
-    <h2>3 · The warmup problem</h2>
+    <h2>3 · Warmup sets drag a median fit into physically impossible territory</h2>
     <p>
         Most sets in a session are deliberately submaximal — warmups and back-off work. So the cloud
         of (reps, weight) points is dense well below true capacity. A regression through the middle of
@@ -238,7 +265,7 @@
 
 <!-- ══ 4. CURVE ══ -->
 <section id="curve" class="paper-section">
-    <h2>4 · The load–rep curve</h2>
+    <h2>4 · The load&ndash;rep curve &mdash; a data-fit version of Lombardi&rsquo;s power law</h2>
     <p>
         The relationship between load and achievable reps is modelled as a power law:
     </p>
@@ -270,9 +297,10 @@
     <p>
         A 1RM is the number everyone quotes, but it sits outside the data. Your sets are almost
         entirely 7–10 reps, so estimating a 1RM means extrapolating past the edge of what was ever
-        observed, and the answer depends heavily on which formula is assumed. An e8RM interpolates,
-        and its interval is correspondingly tighter — so that is what gets headlined, with e1RM shown
-        alongside carrying the wider interval it honestly deserves.
+        observed, and the answer depends heavily on which formula is assumed. An e8RM &mdash; an
+        <strong>e</strong>stimated 8-rep max, read off the fitted curve rather than lifted &mdash;
+        interpolates, and its interval is correspondingly tighter. So that is what gets headlined, with
+        e1RM shown alongside carrying the wider interval it honestly deserves.
     </p>
     <div class="chart-host" id="reps-chart"></div>
     <div class="callout" id="reps-callout"></div>
@@ -316,6 +344,10 @@
         explanation: Garmin logs dumbbell weight <em>per hand</em>, so two of them plus the
         biomechanical difference lands about there. That the estimate reproduces a known mechanical
         fact it was never told about is the first sign it is measuring something real.
+    </p>
+    <p class="note">
+        Only variants that actually need converting appear below. The reference variant for each
+        family is fixed at &times;1 by definition, not measured, so it has nothing to plot.
     </p>
     <div class="chart-host" id="conversion-chart"></div>
     <div class="callout" id="conversion-callout"></div>
@@ -389,11 +421,12 @@
     <div class="callout" id="repvar-callout"></div>
 </section>
 
-<!-- ══ 6. FITTING ══ -->
+<!-- ══ 7. FITTING ══ -->
 <section id="fitting" class="paper-section">
-    <h2>7 · Fitting &amp; diagnostics</h2>
+    <h2>7 · Fitting &amp; diagnostics &mdash; validated on synthetic data, not yet converged on the real one</h2>
     <p>
-        Sampled with NUTS (PyMC, numpyro backend). Convergence is judged by \(\hat{R}\), which
+        Sampled with NUTS (No-U-Turn Sampler; PyMC, numpyro backend). Convergence is judged by
+        \(\hat{R}\), which
         compares variance between chains to variance within them; the conventional bar is
         \(\hat{R} \le 1.01\).
     </p>
@@ -403,7 +436,7 @@
 
     <div class="status-banner" id="fit-status-banner"></div>
 
-    <h3>What has been tried</h3>
+    <h3>Two experiments ruled out &mdash; the leading suspect is now the likelihood, not the parameterisation</h3>
     <p>
         Each bar is a real run. Lower is better; the dashed line is the 1.01 bar.
         <strong>Check the scope under each label</strong> — some are deliberate subsets, and
@@ -412,7 +445,7 @@
     <div class="chart-host" id="convergence-chart"></div>
     <div class="callout is-warn" id="convergence-callout"></div>
 
-    <h3>Validation on synthetic data</h3>
+    <h3>Synthetic-data validation passes cleanly &mdash; the model's logic isn't the problem</h3>
     <p>
         The model itself is verified against data generated from a known curve: it recovers a true
         \(\beta\) of 0.13 as <strong>0.130</strong>, recovers the strength trajectory to within ~1%,
@@ -422,11 +455,12 @@
     </p>
 </section>
 
-<!-- ══ 7. HRV ══ -->
+<!-- ══ 8. HRV ══ -->
 <section id="hrv" class="paper-section">
-    <h2>8 · Does training move your HRV?</h2>
+    <h2>8 · Training does move HRV &mdash; but only with a lag</h2>
     <p>
-        HRV is strongly autocorrelated, so a raw correlation against training load mostly rediscovers
+        HRV (heart rate variability) is strongly autocorrelated, so a raw correlation against training
+        load mostly rediscovers
         “yesterday's HRV predicts today's”. The bars below are <strong>partial</strong> correlations —
         training load against HRV after removing HRV's own lag-1 and 7-day baseline.
     </p>
@@ -434,10 +468,9 @@
     <div class="callout" id="lag-callout"></div>
 </section>
 
-<!-- ══ 8. ROADMAP ══ -->
 <!-- ══ 9. PREDICTABILITY ══ -->
 <section id="predictive" class="paper-section">
-    <h2>9 · Is any of this actually predictable?</h2>
+    <h2>9 · Beats persistence, but training features add nothing</h2>
     <p>
         Before modelling how training affects recovery, it is worth asking whether the effect is
         large enough to show up at all. This section is the reality check: if training history
@@ -455,8 +488,8 @@
         Two load measures are carried and deliberately never blended. <strong>Duration</strong>
         exists for every session including manually-logged ones. <strong>HR load</strong> is
         duration times average heart rate above resting — a volume&times;intensity measure in the
-        spirit of Banister's TRIMP, but simpler on purpose: TRIMP proper needs a maximum heart
-        rate, and estimating one from age would put a fabricated number in every row. They
+        spirit of Banister's TRIMP (Training Impulse), but simpler on purpose: TRIMP proper needs a
+        maximum heart rate, and estimating one from age would put a fabricated number in every row. They
         disagree informatively, which is the point: an hour of bouldering and an hour of easy
         running are the same duration and very different loads.
     </p>
@@ -485,7 +518,7 @@
     <div class="chart-host" id="skill-chart"></div>
     <div class="callout" id="skill-callout"></div>
 
-    <h3>Where that skill actually comes from</h3>
+    <h3>The skill comes from autocorrelation, not from training</h3>
     <p>
         Beating persistence is a low bar that autocorrelation alone can clear, so on its own it
         says nothing about training. Refitting with only the outcome's own recent history, then
@@ -494,7 +527,7 @@
     </p>
     <div class="chart-host" id="ablation-chart"></div>
     <div class="callout is-warn" id="ablation-callout"></div>
-    <div class="badge-row"><span class="badge badge-bespoke">Negative result</span>
+    <div class="badge-row"><span class="badge badge-null">Negative result</span>
         <span class="note">This does not contradict the in-sample lag-2 partial correlation of
         +0.14 in the section above. A real effect that small will not improve point prediction.
         Both are true, and the second sets the ceiling on what the causal work can honestly
@@ -516,12 +549,13 @@
     </p>
 </section>
 
+<!-- ══ 10. ROADMAP ══ -->
 <section id="roadmap" class="paper-section">
     <h2>10 · Roadmap</h2>
     <div class="roadmap" id="roadmap-list"></div>
 </section>
 
-<!-- ══ 9. PROVENANCE ══ -->
+<!-- ══ 11. PROVENANCE ══ -->
 <section id="provenance" class="paper-section">
     <h2>11 · Provenance — what is borrowed, what is not</h2>
     <p>
@@ -545,6 +579,12 @@
 
 .paper-main { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 .paper-section { background: var(--lg-card); border: 1px solid var(--lg-border); border-radius: var(--lg-radius-lg); padding: 24px 28px; scroll-margin-top: calc(var(--lg-nav-h) + 16px); }
+
+.toc { background: var(--lg-card); border: 1px solid var(--lg-border); border-radius: var(--lg-radius-lg); padding: 16px 20px; }
+.toc-label { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.08em; color: var(--lg-text-3); margin-bottom: 8px; }
+.toc-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 5px 24px; margin: 0; padding: 0; list-style: none; }
+.toc-list a { font-size: var(--fs-sm); color: var(--lg-text-2); text-decoration: none; line-height: 1.5; }
+.toc-list a:hover { color: var(--lg-gold); text-decoration: underline; }
 .paper-section h2 { font-size: 20px; margin: 0 0 12px; letter-spacing: -0.01em; }
 .paper-section h3 { font-size: 15px; margin: 26px 0 8px; color: var(--lg-text); }
 .paper-section p { max-width: 74ch; line-height: 1.62; margin: 0 0 12px; color: var(--lg-text-2); }
@@ -564,6 +604,9 @@
 .badge-contested { background: color-mix(in srgb, var(--lg-warning) 20%, transparent); color: var(--lg-warning); }
 .badge-bespoke { background: color-mix(in srgb, var(--lg-highlight) 18%, transparent); color: var(--lg-highlight); }
 .badge-unsupported { background: color-mix(in srgb, var(--lg-danger) 16%, transparent); color: var(--lg-danger); }
+/* Verdict, not provenance -- a different dimension from the Literature/Bespoke badges above,
+   so it gets a visually distinct (neutral) style rather than reusing one of their colours. */
+.badge-null { background: color-mix(in srgb, var(--lg-text-3) 20%, transparent); color: var(--lg-text-2); }
 
 .control-strip { display: flex; flex-wrap: wrap; gap: 22px; padding: 12px 14px; margin: 8px 0 4px; background: var(--lg-active); border-radius: var(--lg-radius-lg); }
 .control-strip label { display: flex; align-items: center; gap: 10px; font-size: var(--fs-sm); color: var(--lg-text-2); }
@@ -594,6 +637,12 @@
 .road-next { background: color-mix(in srgb, var(--lg-info) 18%, transparent); color: var(--lg-info); }
 .road-body { font-size: var(--fs-sm); color: var(--lg-text-2); line-height: 1.5; }
 .road-body b { color: var(--lg-text); }
+
+.data-table-wrap { overflow-x: auto; margin-top: 10px; }
+.data-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+.data-table th { text-align: left; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--lg-text-3); padding: 6px 12px 6px 0; border-bottom: 1px solid var(--lg-border); }
+.data-table td { padding: 8px 12px 8px 0; border-bottom: 1px solid var(--lg-border); color: var(--lg-text-2); vertical-align: top; }
+.data-table td:first-child { color: var(--lg-text); font-weight: 650; white-space: nowrap; }
 
 code { background: var(--lg-active); padding: 1px 5px; border-radius: 4px; font-size: 0.92em; }
 :root { --lg-muted-chart: #8d9aab; }
@@ -714,11 +763,17 @@ function renderKpis(d) {
     const sets = (d.load_types || []).reduce((a, r) => a + r.n_sets, 0);
     const hrvN = d.wellness_lags ? d.wellness_lags.n : 0;
     const fitted = (d.strength_curves || {}).n_fitted || 0;
+    const rq = d.review_queue || {};
+    const rqConfirmed = (rq.counts || {}).garmin_confirmed || 0;
+    const rqTotal = rq.total || 0;
+    const rqPct = rqTotal ? Math.round(rqConfirmed / rqTotal * 100) : 0;
     const boxes = [
         { k: 'Strength sets', v: sets.toLocaleString(), s: 'one row per set' },
         { k: 'Wellness days', v: hrvN.toLocaleString(), s: 'usable for HRV modelling' },
         { k: 'Datasets', v: cov.length, s: `${daily.length} daily, ${cov.length - daily.length} activity` },
         { k: 'Curves fitted', v: fitted, s: fitted ? 'converged' : 'blocked on convergence' },
+        { k: 'Exercise labels reviewed', v: rqTotal ? `${rqPct}%` : '—',
+          s: rqTotal ? `${rqConfirmed.toLocaleString()} of ${rqTotal.toLocaleString()} sets confirmed` : 'no review data' },
     ];
     document.getElementById('overview-kpis').innerHTML = boxes.map(b =>
         `<div class="kpi-box"><div class="k">${b.k}</div><div class="v">${b.v}</div><div class="s">${b.s}</div></div>`
@@ -938,10 +993,33 @@ function renderLoadTypes(rows) {
     const a = rows.find(r => r.load_type === 'assisted' && r.corr_weight_reps > 0 && r.reliable);
     const bw = rows.filter(r => r.load_type === 'bodyweight_reps' && r.n_sets > 0);
     let html = '';
-    if (a) html += `<strong>${label(a.exercise)}: r = ${a.corr_weight_reps.toFixed(3)} (95% CI ${a.corr_lo} to ${a.corr_hi}, ${a.n_loaded_sets} sets)</strong> — a tight interval clear of zero, and still the wrong conclusion. The signal is real but it is measuring a mixture of three movements, not one exercise's load–rep curve (see the note above). A confident interval around a badly-specified quantity is still confidently wrong. `;
+    if (a) html += `<strong>${label(a.exercise)}: r = ${a.corr_weight_reps.toFixed(3)} (95% CI, confidence interval, ${a.corr_lo} to ${a.corr_hi}, ${a.n_loaded_sets} sets)</strong> — a tight interval clear of zero, and still the wrong conclusion. The signal is real but it is measuring a mixture of three movements, not one exercise's load–rep curve (see the note above). A confident interval around a badly-specified quantity is still confidently wrong. `;
     if (weak.length) html += `<br><br><strong>The faded bars are under-sampled</strong> (${weak.map(r => `${label(r.exercise)} n=${r.n_loaded_sets}`).join(', ')}). Their intervals are far too wide to reclassify anything on — the point estimates alone would have been enough to misclassify them, which is exactly why the intervals are drawn. `;
     if (bw.length) html += `<br><br>${bw.map(b => label(b.exercise)).join(', ')} are 100% zero-weight; they track reps instead.`;
     document.getElementById('load-type-callout').innerHTML = html;
+}
+
+/* ── 2b. Full load-type taxonomy (every exercise, not just the testable subset) ── */
+const LOAD_TYPE_LABELS = {
+    external_load: 'External load',
+    bodyweight_reps: 'Bodyweight (reps)',
+    bodyweight_plus: 'Bodyweight + added load',
+    assisted: 'Assisted (machine)',
+    mixed: 'Mixed',
+};
+function renderLoadTypeTable(table) {
+    const el = document.getElementById('load-type-table');
+    if (!el || !table) return;
+    const groups = new Map();
+    Object.entries(table).forEach(([exercise, kind]) => {
+        if (!groups.has(kind)) groups.set(kind, []);
+        groups.get(kind).push(label(exercise));
+    });
+    const kinds = [...groups.keys()].sort();
+    const rows = kinds.map(k =>
+        `<tr><td>${LOAD_TYPE_LABELS[k] || k}</td><td>${groups.get(k).sort().join(', ')}</td></tr>`
+    ).join('');
+    el.innerHTML = `<thead><tr><th>Load type</th><th>Exercises</th></tr></thead><tbody>${rows}</tbody>`;
 }
 
 /* ── 3. Warmup / quantile slider ── */
@@ -1576,6 +1654,7 @@ async function loadReport(source) {
         renderStructure(d.session_structure);
         renderTempo(d.tempo_quality);
         renderLoadTypes(d.load_types || []);
+        renderLoadTypeTable(d.load_type_table);
         renderWarmup();
         renderCurveExplorer();
         renderReps(d.rep_distribution);
